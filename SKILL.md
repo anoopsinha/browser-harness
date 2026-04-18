@@ -21,23 +21,6 @@ PY
 
 The code is the doc.
 
-Available interaction skills:
-- `cookies.md`
-- `cross-origin-iframes.md`
-- `dialogs.md`
-- `downloads.md`
-- `drag-and-drop.md`
-- `dropdowns.md`
-- `iframes.md`
-- `network-requests.md`
-- `print-as-pdf.md`
-- `screenshots.md`
-- `scrolling.md`
-- `shadow-dom.md`
-- `tabs.md`
-- `uploads.md`
-- `viewport.md`
-
 Available domain skills:
 - `tiktok/upload.md`
 
@@ -75,23 +58,35 @@ Parallel agents should use distinct `BU_NAME`s and can share the same `helpers.p
 
 ## Search first
 
-After cloning the repo, search `interaction-skills/` for reusable UI mechanics and `domain-skills/` for site-specific workflows before inventing a new approach.
+After cloning the repo, search `domain-skills/` first for the domain you are working on before inventing a new approach.
+
+Only if you start struggling with a specific mechanic while navigating, look in `interaction-skills/` for helpers. The available interaction skills are:
+- `cookies.md`
+- `cross-origin-iframes.md`
+- `dialogs.md`
+- `downloads.md`
+- `drag-and-drop.md`
+- `dropdowns.md`
+- `iframes.md`
+- `network-requests.md`
+- `print-as-pdf.md`
+- `screenshots.md`
+- `scrolling.md`
+- `shadow-dom.md`
+- `tabs.md`
+- `uploads.md`
+- `viewport.md`
 
 Useful commands:
 
 ```bash
-rg --files interaction-skills domain-skills
-rg -n "dropdown|iframe|upload|tiktok" interaction-skills domain-skills
+rg --files domain-skills
+rg -n "tiktok|upload" domain-skills
 ```
 
 ## Post-task ritual (self-improving harness)
 
-After every browser task, extract ONE generalizable friction point from the interaction (a failed selector strategy, a slow pattern, a missing helper, a confusing result) and make the **simplest possible** improvement:
-- a 2-line helper in `helpers.py`, OR
-- a one-line gotcha in this file, OR
-- a correction to a wrong recipe here.
-
-Commit with the task. The skill gets sharper every use. Skip only if nothing was surprising.
+If needed, modify your own helper functions to fix tools that do not work well on a task, make repeated actions more efficient, or fix recurring browser-interaction problems.
 
 If you spend a couple of corrective steps learning things you would want to know on the next similar task for the same domain, add or update a Markdown skill under `domain-skills/<domain>/` (create the directory if needed) with all reusable learnings that would speed up the next run, such as where to wait for network requests, which interaction patterns worked, and what traps matter. `domain-skills/` is shared across users, so include only sanitized, reusable guidance and never include sensitive data, secrets, or user-specific details. Then open a PR to this public repo.
 
