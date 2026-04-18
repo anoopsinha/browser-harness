@@ -1,294 +1,184 @@
-# GitHub — Scraping public data
+# GitHub — Scraping & Data Extraction
 
-`https://github.com` and `https://api.github.com` — public repo metadata, user profiles, trending pages, releases, and README content.
+`https://github.com` — public data, mix of REST API (fast, rate-limited) and browser (trending page only).
 
 ## Do this first
 
-**Use the REST API with `http_get`, not the browser.** For anything that has an API endpoint (repo metadata, user profiles, releases, tags, README), a single `http_get` call replaces `goto + wait_for_load + screenshot + js`. The browser is only needed for pages that render client-side without a JSON equivalent (trending page, search results with JS filtering).
+**Use the REST API for repo/user/release data — it's one call, no browser, fully parsed JSON.**
 
 ```python
-import json, os
-
-def gh_get(path, token=None):
-    headers = {"Accept": "application/vnd.github+json"}
-    tok = token or os.environ.get("GITHUB_TOKEN")
-    if tok:
-        headers["Authorization"] = f"token {tok}"
-    return json.loads(http_get(f"https://api.github.com{path}", headers=headers))
-
-# Repo metadata — stars, forks, description, topics, language, license
-repo = gh_get("/repos/browser-use/browser-use")
-print(repo["stargazers_count"], repo["forks_count"], repo["description"])
+import json
+data = json.loads(http_get("https://api.github.com/repos/{owner}/{repo}"))
+# Key fields: stargazers_count, forks_count, description, language, topics,
+#             open_issues_count, created_at, updated_at, pushed_at,
+#             watchers_count, subscribers_count, network_count,
+#             default_branch, license, homepage, visibility
 ```
 
-Unauthenticated: **60 requests/hour** per IP. With a token: **5000/hour**. Always check `X-RateLimit-Remaining` before looping.
+Use `raw.githubusercontent.com` for file contents — no rate limit, no auth, no base64 decode:
 
----
+```python
+readme = http_get("https://raw.githubusercontent.com/owner/repo/main/README.md")
+content = http_get("https://raw.githubusercontent.com/owner/repo/main/pyproject.toml")
+```
+
+Use the browser **only** for the trending page — it's server-side rendered HTML, no API equivalent.
 
 ## Common workflows
 
-### 1. Trending repositories (browser required)
-
-The trending page (`https://github.com/trending`) is rendered client-side — `http_get` returns a skeleton with no repo data. Use the browser.
+### Repo metadata (API)
 
 ```python
-goto("https://github.com/trending")
+import json
+data = json.loads(http_get("https://api.github.com/repos/browser-use/browser-use"))
+print(data['stargazers_count'], data['forks_count'], data['description'])
+# returns: 88349  10136  '🌐 Make websites accessible for AI agents.'
+```
+
+### User / org profile (API)
+
+```python
+import json
+user = json.loads(http_get("https://api.github.com/users/browser-use"))
+print(user['type'], user['followers'], user['public_repos'], user['blog'])
+# returns: 'Organization'  3046  39  'https://browser-use.com'
+```
+
+### Trending page (browser required)
+
+The trending page is JS-rendered. `article.Box-row` selector confirmed working (15 results for today/all-languages, 12 for filtered). All fields work in a single JS call — **must navigate and wait in the same script run**, as each run is a separate exec context.
+
+```python
+import json
+goto("https://github.com/trending")          # or /trending/python?since=weekly
 wait_for_load()
+wait(2)                                       # extra 2s — React hydration completes after readyState
 
-# Optional: filter by language and period via URL params
-# goto("https://github.com/trending/python?since=weekly")
-# goto("https://github.com/trending/typescript?since=daily")
-
-repos = js("""
-(function() {
-  var rows = document.querySelectorAll('article.Box-row');
-  return Array.from(rows).map(function(row) {
-    var nameEl = row.querySelector('h2 a');
-    var descEl = row.querySelector('p');
-    var starsEl = row.querySelector('a[href$="/stargazers"]');
-    var forksEl = row.querySelector('a[href$="/forks"]');
-    var langEl  = row.querySelector('[itemprop="programmingLanguage"]');
-    var todayEl = row.querySelector('.float-sm-right');
+result = js("""
+(function(){
+  var rows = Array.from(document.querySelectorAll('article.Box-row'));
+  return JSON.stringify(rows.map(function(el){
+    var h2link = el.querySelector('h2 a');
+    var starLink = el.querySelector('a[href*="/stargazers"]');
+    var forkLink = el.querySelector('a[href*="/forks"]');
+    var langEl = el.querySelector('[itemprop="programmingLanguage"]');
+    var todayEl = el.querySelector('.d-inline-block.float-sm-right');
+    var descEl = el.querySelector('p');
     return {
-      full_name:   nameEl ? nameEl.getAttribute('href').slice(1) : null,
-      url:         nameEl ? 'https://github.com' + nameEl.getAttribute('href') : null,
-      description: descEl ? descEl.textContent.trim() : null,
-      stars:       starsEl ? starsEl.textContent.trim() : null,
-      forks:       forksEl ? forksEl.textContent.trim() : null,
-      language:    langEl  ? langEl.textContent.trim() : null,
-      stars_today: todayEl ? todayEl.textContent.trim() : null,
+      name: h2link ? h2link.innerText.trim().replace(/\\s+/g,' ') : null,
+      url: h2link ? 'https://github.com' + h2link.getAttribute('href') : null,
+      stars_total: starLink ? starLink.innerText.trim() : null,
+      stars_period: todayEl ? todayEl.innerText.trim() : null,
+      forks: forkLink ? forkLink.innerText.trim() : null,
+      language: langEl ? langEl.innerText.trim() : null,
+      desc: descEl ? descEl.innerText.trim() : null
     };
-  });
+  }));
 })()
 """)
-print(repos[:10])
+repos = json.loads(result)
+# stars_period text is e.g. "737 stars today" or "47,053 stars this week"
 ```
 
-**Note:** `stars` from the DOM will be "1.2k" not `1234`. Use the API for exact counts if you need them:
+Supported URL params:
+- `/trending` — all languages, today
+- `/trending/python` — filtered to Python
+- `/trending?since=weekly` or `?since=monthly`
+- `/trending/python?since=weekly` — combined
+
+### Search repositories (API)
 
 ```python
+import json
+results = json.loads(http_get(
+    "https://api.github.com/search/repositories?q=browser+automation+language:python&sort=stars&per_page=10"
+))
+print(results['total_count'])   # e.g. 3250
+for r in results['items']:
+    print(r['full_name'], r['stargazers_count'])
+```
+
+Search API rate limit is **10 req/min** unauthenticated (separate from the 60/hour core limit). Runs out fast if called in a loop.
+
+### Commits, releases, issues (API)
+
+```python
+import json
+# Commits
+commits = json.loads(http_get("https://api.github.com/repos/owner/repo/commits?per_page=10"))
+# Fields: sha, commit.message, commit.author.date, author.login
+
+# Releases
+releases = json.loads(http_get("https://api.github.com/repos/owner/repo/releases?per_page=5"))
+# Fields: tag_name, name, published_at, body, assets
+
+# Issues
+issues = json.loads(http_get("https://api.github.com/repos/owner/repo/issues?state=open&per_page=10"))
+# Fields: number, title, labels, state, created_at, user.login
+
+# Contributors
+contribs = json.loads(http_get("https://api.github.com/repos/owner/repo/contributors?per_page=10"))
+# Fields: login, contributions
+```
+
+### File contents via API (base64)
+
+```python
+import json, base64
+resp = json.loads(http_get("https://api.github.com/repos/owner/repo/contents/path/to/file.py"))
+content = base64.b64decode(resp['content']).decode()
+# resp also has: size, sha, html_url
+# Prefer raw.githubusercontent.com for large files — no base64, no rate limit hit
+```
+
+### Parallel fetching (multiple repos)
+
+```python
+import json
 from concurrent.futures import ThreadPoolExecutor
 
-def enrich(repo):
-    data = gh_get(f"/repos/{repo['full_name']}")
-    repo["stars_exact"] = data["stargazers_count"]
-    repo["forks_exact"] = data["forks_count"]
-    return repo
+def fetch_repo(name):
+    data = json.loads(http_get(f"https://api.github.com/repos/{name}"))
+    return {"name": name, "stars": data['stargazers_count'], "lang": data['language']}
 
-with ThreadPoolExecutor(max_workers=8) as ex:
-    enriched = list(ex.map(enrich, repos))
+repos = ["owner/repo1", "owner/repo2", "owner/repo3"]
+with ThreadPoolExecutor(max_workers=3) as ex:
+    results = list(ex.map(fetch_repo, repos))
+# Confirmed working; watch rate limit — 60 unauthenticated calls/hour total
 ```
-
----
-
-### 2. User profile — followers, bio, public repos
-
-```python
-# API (preferred)
-user = gh_get("/users/Archish27")
-print(user["followers"])       # int, exact
-print(user["following"])
-print(user["public_repos"])
-print(user["bio"])
-print(user["avatar_url"])
-print(user["blog"])            # personal site if set
-print(user["company"])
-print(user["location"])
-```
-
-Fields always present: `login`, `id`, `avatar_url`, `html_url`, `type`, `public_repos`, `public_gists`, `followers`, `following`, `created_at`, `updated_at`.
-
----
-
-### 3. Repository metadata — stars, forks, topics, language
-
-```python
-repo = gh_get("/repos/n4ze3m/page-assist")
-
-print({
-    "stars":       repo["stargazers_count"],
-    "forks":       repo["forks_count"],
-    "watchers":    repo["watchers_count"],
-    "open_issues": repo["open_issues_count"],
-    "language":    repo["language"],          # primary language
-    "topics":      repo["topics"],            # list[str]
-    "license":     repo["license"]["name"] if repo["license"] else None,
-    "description": repo["description"],
-    "created_at":  repo["created_at"],
-    "pushed_at":   repo["pushed_at"],         # last commit time
-    "default_branch": repo["default_branch"],
-    "archived":    repo["archived"],
-})
-```
-
----
-
-### 4. README content
-
-```python
-import base64
-
-readme = gh_get("/repos/browser-use/browser-use/readme")
-# content is base64-encoded
-text = base64.b64decode(readme["content"]).decode("utf-8")
-print(text[:2000])
-```
-
-Alternatively, raw markdown (no auth needed, no rate limit from the API quota):
-
-```python
-raw = http_get("https://raw.githubusercontent.com/browser-use/browser-use/main/README.md")
-print(raw[:2000])
-```
-
-`raw.githubusercontent.com` is a plain CDN — not rate-limited like the API. Prefer it for README-only tasks.
-
----
-
-### 5. Latest releases and tags
-
-```python
-# Latest release (published, non-prerelease)
-release = gh_get("/repos/owner/repo/releases/latest")
-print(release["tag_name"])      # e.g. "v1.2.3"
-print(release["name"])          # release title
-print(release["body"])          # release notes (markdown)
-print(release["published_at"])
-print(release["html_url"])
-
-# Assets (download URLs)
-for asset in release["assets"]:
-    print(asset["name"], asset["browser_download_url"])
-
-# All releases (paginated)
-releases = gh_get("/repos/owner/repo/releases?per_page=10")
-for r in releases:
-    print(r["tag_name"], r["published_at"], r["prerelease"])
-
-# Tags (lighter — no release notes)
-tags = gh_get("/repos/owner/repo/tags?per_page=10")
-for t in tags:
-    print(t["name"], t["commit"]["sha"])
-```
-
----
-
-### 6. Parallel multi-repo fetch
-
-```python
-import json, os
-from concurrent.futures import ThreadPoolExecutor
-
-repos_to_check = [
-    "browser-use/browser-use",
-    "n4ze3m/page-assist",
-    "microsoft/vscode",
-]
-
-def fetch_repo(full_name):
-    try:
-        return gh_get(f"/repos/{full_name}")
-    except Exception as e:
-        return {"full_name": full_name, "error": str(e)}
-
-with ThreadPoolExecutor(max_workers=10) as ex:
-    results = list(ex.map(fetch_repo, repos_to_check))
-
-for r in results:
-    if "error" not in r:
-        print(r["full_name"], r["stargazers_count"])
-```
-
----
-
-### 7. Most starred repos for a language (Search API)
-
-```python
-# Top Python repos by stars from the past week
-import urllib.parse
-
-q = urllib.parse.quote("language:python created:>2026-04-11")
-results = gh_get(f"/search/repositories?q={q}&sort=stars&order=desc&per_page=10")
-for item in results["items"]:
-    print(item["full_name"], item["stargazers_count"])
-```
-
-Search API counts against rate limits more aggressively — **30 requests/min** unauthenticated, **30/min** authenticated (same for search). Add a `GITHUB_TOKEN` to avoid 422/403 on busy loops.
-
----
-
-## When to use the browser vs pure HTTP
-
-| Task | Method |
-|---|---|
-| Repo metadata (stars, forks, desc, topics) | `http_get` → API |
-| User profile (followers, bio, avatar) | `http_get` → API |
-| README text | `http_get` → raw CDN |
-| Latest release / tags | `http_get` → API |
-| Trending page (all languages) | Browser (`goto` + `js`) |
-| Trending page filtered by language | Browser (`goto` + `js`) |
-| Search results with JS-driven filters | Browser |
-| Paginated issue / PR lists | `http_get` → API (`?page=N&per_page=100`) |
-| File contents in a repo | `http_get` → `raw.githubusercontent.com` |
-| Private repos | Browser (authenticated session) OR API with token |
-
----
 
 ## Gotchas
 
-- **Unauthenticated rate limit is 60 req/hr total per IP** — not per endpoint. A loop over 70 repos will hit it. Set `GITHUB_TOKEN` in `.env` or the environment:
+- **Rate limits are per IP, unauthenticated** — Core API: 60 req/hour. Search API: 10 req/min. These are separate pools. Check `/rate_limit` endpoint: `http_get("https://api.github.com/rate_limit")`. With a `GITHUB_TOKEN`, both limits increase to 5,000/hour.
 
+- **Token header format** — Use `Authorization: Bearer <token>` (not `token <token>`), plus `X-GitHub-Api-Version: 2022-11-28`:
   ```python
   import os
-  # Set once; gh_get() picks it up automatically via os.environ.get("GITHUB_TOKEN")
-  # Don't hardcode the token in scripts
+  token = os.environ.get('GITHUB_TOKEN', '')
+  headers = {"Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28"} if token else {}
+  data = json.loads(http_get("https://api.github.com/repos/owner/repo", headers=headers))
   ```
 
-- **Trending page needs the browser, not `http_get`.** `http_get("https://github.com/trending")` returns the HTML skeleton; the repo list is injected by a React bundle after `DOMContentLoaded`. Always use `goto` + `wait_for_load` + `js(...)`.
-
-- **Star counts in the trending DOM are formatted strings ("1.2k", "23.4k"), not integers.** Use the API if you need exact numbers. Quick parser if you only have DOM values:
-
+- **404 raises HTTPError, not a JSON error** — Wrap API calls for missing repos:
   ```python
-  def parse_stars(s):
-      s = s.strip().replace(",", "")
-      if s.endswith("k"):
-          return int(float(s[:-1]) * 1000)
-      return int(s)
+  try:
+      data = json.loads(http_get("https://api.github.com/repos/owner/repo"))
+  except Exception as e:
+      print("Not found or rate limited:", e)
   ```
 
-- **The trending page `article.Box-row` selector is stable as of 2026-04** but GitHub redesigns without notice. If `js(...)` returns an empty list, `screenshot()` to see the current DOM structure and update the selector.
+- **Code search requires auth** — `GET /search/code` returns HTTP 401 without a token. Repo/user/issues search works unauthenticated.
 
-- **`/repos/{owner}/{repo}` 404s if the repo is private or deleted** — wrap in try/except and check `response["message"]`.
+- **Trending page selectors only work if navigation is in the same script run** — Each `uv run browser-harness` exec is fresh. Selectors that returned 0 results were run in a separate invocation after the page had navigated away. Always include `goto()` + `wait_for_load()` + `wait(2)` in the same script.
 
-- **Search API has a separate lower rate limit (30/min) and requires queries to have at least one qualifier.** `q=stars:>1000` works; `q=` alone returns a 422.
+- **wait(2) after wait_for_load() on trending** — `document.readyState == 'complete'` fires before React finishes painting repo cards. Without the extra 2s sleep, `article.Box-row` count was 0 even though the DOM technically loaded.
 
-- **`raw.githubusercontent.com` is NOT rate-limited by the GitHub API quota** — use it freely for file content, README, and configs. It's a CDN, not the API gateway.
+- **Trending stars field is a string with commas** — `stars_total` comes back as `"4,548"` not `4548`. Parse with `int(r['stars_total'].replace(',', ''))` if you need to sort.
 
-- **Pagination:** API endpoints default to `per_page=30`, max `per_page=100`. For full lists:
+- **stars_period text includes the period** — Value is `"737 stars today"` or `"47,053 stars this week"` — strip the trailing word if you want just the number.
 
-  ```python
-  def paginate(path):
-      results, page = [], 1
-      while True:
-          sep = "&" if "?" in path else "?"
-          batch = gh_get(f"{path}{sep}per_page=100&page={page}")
-          if not batch:
-              break
-          results.extend(batch)
-          if len(batch) < 100:
-              break
-          page += 1
-      return results
+- **Repo page DOM is React-heavy, API is better** — Extracting star counts from the repo HTML page (`github.com/owner/repo`) is unreliable because GitHub uses React with server-side hydration and component IDs change. The REST API returns all the same data cleanly.
 
-  all_releases = paginate("/repos/owner/repo/releases")
-  ```
+- **raw.githubusercontent.com has no rate limit and no auth** — Use it for any public file. It serves the raw bytes, no JSON wrapping or base64.
 
-- **GraphQL API** (not shown above) at `https://api.github.com/graphql` supports batching many repos in one request — worth it if you're pulling data for 50+ repos and want to stay under rate limits. Requires a token with appropriate scopes.
-
-- **Lazy loading on long repo lists in the browser:** GitHub infinite-scrolls contributor lists and file trees. If `js(...)` returns fewer items than expected, scroll first:
-
-  ```python
-  scroll(760, 400, dy=3000)
-  wait(1.5)
-  # then re-run the js() extraction
-  ```
+- **Trending page article count varies** — Today filter returned 15 articles, weekly Python filter returned 12. Don't assume 25 results; iterate `document.querySelectorAll('article.Box-row')` and take what's there.
