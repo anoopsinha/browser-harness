@@ -20,12 +20,10 @@ Set up https://github.com/browser-use/harnessless for me.
 8. If I am not signed in, ask me what task I want to run instead.
 ```
 
-## Example tasks
+## Example task
 
 ```text
-Use this browser harness to open my real Chrome and submit the form on example.com.
-Use this browser harness to export the current page as a PDF.
-Use this browser harness to upload a file on the current site.
+Star this repository.
 ```
 
 ## Get inspiration
