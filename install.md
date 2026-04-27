@@ -30,14 +30,31 @@ After the repo is installed, register this repo's `SKILL.md` with the agent you 
 
 - **Codex**: add this file as a global skill at `$CODEX_HOME/skills/browser-harness/SKILL.md` (often `~/.codex/skills/browser-harness/SKILL.md`). A symlink to this repo's `SKILL.md` is fine.
 - **Claude Code**: add an import to `~/.claude/CLAUDE.md` that points at this repo's `SKILL.md`, for example `@~/src/browser-harness/SKILL.md`.
+- **Gemini CLI**: Create a Knowledge Item for the skill by symlinking `SKILL.md` and adding a `metadata.json` so it loads globally.
 
-Codex command:
+Agent-specific commands:
+
+**Codex**:
 
 ```bash
 mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills/browser-harness" && ln -sf "$PWD/SKILL.md" "${CODEX_HOME:-$HOME/.codex}/skills/browser-harness/SKILL.md"
 ```
 
-That makes new Codex or Claude Code sessions in other folders load the runtime browser harness instructions automatically. An empty `~/.codex/skills/browser-harness/` directory is fine; the symlink command above populates it.
+**Gemini CLI**:
+
+```bash
+mkdir -p "$HOME/.gemini/antigravity/knowledge/browser-harness/artifacts"
+ln -sf "$PWD/SKILL.md" "$HOME/.gemini/antigravity/knowledge/browser-harness/artifacts/SKILL.md"
+cat <<EOF > "$HOME/.gemini/antigravity/knowledge/browser-harness/metadata.json"
+{
+  "summary": "Browser Harness Skill - Instructions for controlling the browser using the browser-harness tool. Read this before attempting to automate or interact with the browser.",
+  "references": ["file://$PWD/SKILL.md"],
+  "created_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
+```
+
+That makes new Codex, Claude Code, or Gemini CLI sessions in other folders load the runtime browser harness instructions automatically. An empty `~/.codex/skills/browser-harness/` directory is fine; the symlink command above populates it.
 
 ## Browser bootstrap
 

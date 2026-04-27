@@ -20,10 +20,10 @@ The agent writes what's missing, mid-task. No framework, no recipes, no rails. O
 
 ## Setup prompt
 
-Paste into Claude Code or Codex:
+Paste into Gemini CLI:
 
 ```text
-Set up https://github.com/browser-use/browser-harness for me.
+Set up https://github.com/anoopsinha/browser-harness for me.
 
 Read `install.md` first to install and connect this repo to my real browser. Then read `SKILL.md` for normal usage. Always read `helpers.py` because that is where the functions are. When you open a setup or verification tab, activate it so I can see the active browser tab. After it is installed, open this repository in my browser and, if I am logged in to GitHub, ask me whether you should star it for me as a quick demo that the interaction works — only click the star if I say yes. If I am not logged in, just go to browser-use.com.
 ```
