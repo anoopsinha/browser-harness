@@ -49,9 +49,6 @@ PROFILES = [
     Path.home() / "AppData/Local/Microsoft/Edge SxS/User Data",
 ]
 INTERNAL = ("chrome://", "chrome-untrusted://", "devtools://", "chrome-extension://", "about:")
-BU_API = "https://api.browser-use.com/api/v3"
-REMOTE_ID = os.environ.get("BU_BROWSER_ID")
-API_KEY = os.environ.get("BROWSER_USE_API_KEY")
 
 
 def log(msg):
@@ -84,20 +81,6 @@ def get_ws_url():
         return f"ws://127.0.0.1:{port.strip()}{path.strip()}"
     raise RuntimeError(f"DevToolsActivePort not found in {[str(p) for p in PROFILES]} — enable chrome://inspect/#remote-debugging, or set BU_CDP_WS for a remote browser")
 
-
-def stop_remote():
-    if not REMOTE_ID or not API_KEY: return
-    try:
-        req = urllib.request.Request(
-            f"{BU_API}/browsers/{REMOTE_ID}",
-            data=json.dumps({"action": "stop"}).encode(),
-            method="PATCH",
-            headers={"X-Browser-Use-API-Key": API_KEY, "Content-Type": "application/json"},
-        )
-        urllib.request.urlopen(req, timeout=15).read()
-        log(f"stopped remote browser {REMOTE_ID}")
-    except Exception as e:
-        log(f"stop_remote failed ({REMOTE_ID}): {e}")
 
 
 def is_real_page(t):
@@ -147,7 +130,6 @@ class Daemon:
                 raise RuntimeError(
                     f"CDP WS handshake failed: {e} -- remote browser WebSocket connection failed. "
                     "This can happen when network policy blocks the connection, the WS URL is wrong or expired, or the remote endpoint is down. "
-                    "If you use Browser Use cloud, verify BROWSER_USE_API_KEY and get a fresh URL via start_remote_daemon()."
                 )
             raise RuntimeError(f"CDP WS handshake failed: {e} -- click Allow in Chrome if prompted, then retry")
         await self.attach_first_page()
@@ -220,7 +202,7 @@ async def serve(d):
 
     server = await asyncio.start_unix_server(handler, path=SOCK)
     os.chmod(SOCK, 0o600)
-    log(f"listening on {SOCK} (name={NAME}, remote={REMOTE_ID or 'local'})")
+    log(f"listening on {SOCK} (name={NAME}, remote={'local'})")
     async with server:
         await d.stop.wait()
 

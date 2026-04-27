@@ -138,8 +138,6 @@ Chrome / Browser Use cloud -> CDP WS -> daemon.py -> /tmp/bu-<NAME>.sock -> run.
 - Requests are {method, params, session_id} for CDP or {meta: ...} for daemon control.
 - Responses are {result} / {error} / {events} / {session_id}.
 - BU_NAME namespaces socket, pid, and log files.
-- BU_CDP_WS overrides local Chrome discovery for remote browsers.
-- BU_BROWSER_ID + BROWSER_USE_API_KEY lets the daemon stop a Browser Use cloud browser on shutdown.
 
 ## Keeping the harness current
 

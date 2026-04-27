@@ -37,28 +37,6 @@ PY
 
 run.py calls ensure_daemon() before exec — you never start/stop manually unless you want to.
 
-### Remote browsers
-
-Use remote for parallel sub-agents (each gets its own isolated browser via a distinct BU_NAME) or on a headless server. BROWSER_USE_API_KEY must be set. start_remote_daemon, list_cloud_profiles, list_local_profiles, sync_local_profile are pre-imported.
-
-```bash
-browser-harness <<'PY'
-start_remote_daemon("work")                               # default — clean browser, no profile
-# start_remote_daemon("work", profileName="my-work")      # reuse a cloud profile (already logged in)
-# start_remote_daemon("work", profileId="<uuid>")         # same, but by UUID
-# start_remote_daemon("work", proxyCountryCode="de", timeout=120)   # DE proxy, 2-hour timeout
-# start_remote_daemon("work", proxyCountryCode=None)      # disable the Browser Use proxy
-PY
-
-BU_NAME=work browser-harness <<'PY'
-new_tab("https://example.com")
-print(page_info())
-PY
-```
-
-start_remote_daemon prints liveUrl and auto-opens it in the local browser (if a GUI is detected) so the user can watch along. Headless servers print only — share the URL with the user. The daemon PATCHes the cloud browser to stop on shutdown, which persists profile state. Running remote daemons bill until timeout.
-
-Profiles (cookies-only login state) live in interaction-skills/profile-sync.md — covers list_cloud_profiles(), the chat-driven "which profile?" pattern, and sync_local_profile() for uploading a local Chrome profile.
 
 ## Search first
 

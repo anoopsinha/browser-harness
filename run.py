@@ -3,16 +3,12 @@ import os, sys
 from admin import (
     _version,
     ensure_daemon,
-    list_cloud_profiles,
     list_local_profiles,
     print_update_banner,
     restart_daemon,
     run_doctor,
     run_setup,
     run_update,
-    start_remote_daemon,
-    stop_remote_daemon,
-    sync_local_profile,
 )
 from helpers import *
 
