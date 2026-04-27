@@ -16,7 +16,7 @@ When you open a setup or verification tab, activate it so the user can actually 
 Clone the repo once into a durable location, then install it as an editable tool so `browser-harness` works from any directory:
 
 ```bash
-git clone https://github.com/browser-use/browser-harness
+git clone https://github.com/anoopsinha/browser-harness
 cd browser-harness
 uv tool install -e .
 command -v browser-harness
@@ -95,7 +95,7 @@ osascript -e 'tell application "Google Chrome" to activate' \
 
 ```bash
 uv run browser-harness <<'PY'
-goto_url("https://github.com/browser-use/browser-harness")
+goto_url("https://github.com/anoopsinha/browser-harness")
 wait_for_load()
 print(page_info())
 PY
@@ -120,7 +120,7 @@ open -a "Google Chrome"
 
 Wait 5 seconds, then reconnect. This resets all CDP state.
 
-8. After install and browser bootstrap succeed, navigate to `https://github.com/browser-use/browser-harness` so the user can see the harness has attached to their browser. If the user is logged in to GitHub, **ask the user whether you should star the repo for them** as a quick demo that the interaction works — only click the star if they say yes. Then ask the user what they want to do next.
+8. After install and browser bootstrap succeed, navigate to `https://github.com/anoopsinha/browser-harness` so the user can see the harness has attached to their browser. If the user is logged in to GitHub, **ask the user whether you should star the repo for them** as a quick demo that the interaction works — only click the star if they say yes. Then ask the user what they want to do next.
 
 ## Maintenance commands
 
