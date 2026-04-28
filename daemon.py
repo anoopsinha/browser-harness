@@ -235,6 +235,5 @@ if __name__ == "__main__":
         log(f"fatal: {e}")
         sys.exit(1)
     finally:
-        stop_remote()
         try: os.unlink(PID)
         except FileNotFoundError: pass
