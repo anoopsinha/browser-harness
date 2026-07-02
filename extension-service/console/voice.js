@@ -75,13 +75,14 @@
   // ---------- text to speech ----------
   const hasTTS = "speechSynthesis" in window;
   let voices = [];
-  // macOS "Enhanced"/"Premium" voices sound far nicer than the default Samantha;
-  // prefer them when installed, else fall back to a decent default.
+  // Only these voices are offered: Samantha, Karen (en-AU), and the Google voices.
+  function keepVoice(v) {
+    return v.name === "Samantha" || v.name === "Karen" || /^Google/i.test(v.name);
+  }
+  // default preference order among the kept voices
   const PREFERRED_VOICES = [
-    "Ava (Premium)", "Ava (Enhanced)", "Zoe (Premium)", "Zoe (Enhanced)",
-    "Evan (Enhanced)", "Nathan (Enhanced)", "Samantha (Enhanced)",
-    "Allison (Enhanced)", "Serena (Premium)", "Serena (Enhanced)",
-    "Ava", "Allison", "Serena", "Samantha", "Karen", "Moira", "Tessa", "Daniel",
+    "Google US English", "Google UK English Female", "Google UK English Male",
+    "Samantha", "Karen",
   ];
   let selectedVoiceName = null;
   try { selectedVoiceName = localStorage.getItem("ttsVoice"); } catch (_) {}
@@ -99,20 +100,16 @@
   }
   function resolveVoice() {
     if (!voices.length) refreshVoices();
+    const kept = voices.filter(keepVoice);
     if (selectedVoiceName) {
-      const v = voices.find((x) => x.name === selectedVoiceName);
+      const v = kept.find((x) => x.name === selectedVoiceName);
       if (v) return v;
     }
     for (const name of PREFERRED_VOICES) {
-      const v = voices.find((x) => x.name === name);
+      const v = kept.find((x) => x.name === name);
       if (v) return v;
     }
-    return (
-      voices.find((v) => v.default && /^en/i.test(v.lang)) ||
-      voices.find((v) => /^en/i.test(v.lang)) ||
-      voices[0] ||
-      null
-    );
+    return kept[0] || null;
   }
 
   function cleanForSpeech(s) {
@@ -256,8 +253,7 @@
     const sel = document.getElementById("voiceSel");
     if (!sel) return;
     refreshVoices();
-    const en = voices.filter((v) => /^en/i.test(v.lang));
-    const list = en.length ? en : voices;
+    const list = voices.filter(keepVoice);
     const resolved = resolveVoice();
     sel.innerHTML = "";
     const auto = document.createElement("option");
