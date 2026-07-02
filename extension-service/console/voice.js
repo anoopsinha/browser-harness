@@ -75,14 +75,13 @@
   // ---------- text to speech ----------
   const hasTTS = "speechSynthesis" in window;
   let voices = [];
-  // Only these voices are offered: Samantha, Karen (en-AU), and the Google voices.
+  // Only Google English voices are offered.
   function keepVoice(v) {
-    return v.name === "Samantha" || v.name === "Karen" || /^Google/i.test(v.name);
+    return /^Google/i.test(v.name) && /^en/i.test(v.lang);
   }
   // default preference order among the kept voices
   const PREFERRED_VOICES = [
     "Google US English", "Google UK English Female", "Google UK English Male",
-    "Samantha", "Karen",
   ];
   let selectedVoiceName = null;
   try { selectedVoiceName = localStorage.getItem("ttsVoice"); } catch (_) {}
