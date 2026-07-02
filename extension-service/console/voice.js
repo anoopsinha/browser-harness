@@ -101,8 +101,10 @@
     const u = new SpeechSynthesisUtterance(t);
     u.rate = 1.03;
     u.lang = "en-US";
+    // Only force a voice if it's an on-device (local) one; remote voices can
+    // fail silently. Otherwise let the browser use its default.
     const v = pickVoice();
-    if (v) u.voice = v;
+    if (v && v.localService) u.voice = v;
     u.onerror = (e) => {
       const err = (e && e.error) || "";
       if (err && err !== "interrupted" && err !== "canceled") setBadge("tts: " + err);
@@ -261,7 +263,40 @@
     },
     // test hook: speak regardless of voice mode (used by the :say command)
     say: (t) => speak(t && t.trim() ? t : "Voice check. One, two, three.", true),
+    diag: diag,
   };
+
+  function log(m) {
+    if (window.Console && window.Console.log) window.Console.log(m);
+  }
+  function diag() {
+    refreshVoices();
+    const lines = ["voice diagnostics:", "  hasTTS = " + hasTTS, "  voices = " + voices.length];
+    voices.slice(0, 8).forEach((v) =>
+      lines.push(
+        "    · " + v.name + " [" + v.lang + "]" +
+          (v.default ? " default" : "") + (v.localService ? " local" : " remote")
+      )
+    );
+    if (hasTTS)
+      lines.push(
+        "  state: speaking=" + speechSynthesis.speaking +
+          " pending=" + speechSynthesis.pending +
+          " paused=" + speechSynthesis.paused
+      );
+    log(lines.join("\n"));
+    if (!hasTTS) return;
+    try { speechSynthesis.cancel(); } catch (_) {}
+    const u = new SpeechSynthesisUtterance("Diagnostic. One two three.");
+    u.lang = "en-US";
+    u.onstart = () => log("  tts onstart ✓ (audio should be playing)");
+    u.onend = () => log("  tts onend ✓");
+    u.onerror = (e) => log("  tts onerror ✗ : " + ((e && e.error) || "?"));
+    lastUtter = u;
+    try { speechSynthesis.resume(); } catch (_) {}
+    speechSynthesis.speak(u);
+    log("  called speak() — watch for onstart/onend/onerror above…");
+  }
 
   render();
 })();

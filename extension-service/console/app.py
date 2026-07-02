@@ -35,6 +35,13 @@ def token() -> str:
 app = Flask(__name__)
 
 
+@app.after_request
+def no_cache(resp):
+    # console assets change during dev; never let the browser serve stale JS
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.route("/")
 def index():
     return send_from_directory(HERE, "index.html")

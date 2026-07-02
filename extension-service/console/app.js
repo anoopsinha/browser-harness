@@ -137,6 +137,11 @@ function handle(input) {
     } else el("err", "voice module not loaded");
     return;
   }
+  if (s === ":voicediag") {
+    if (window.Voice && window.Voice.diag) window.Voice.diag();
+    else el("err", "voice module not loaded");
+    return;
+  }
   if (s.startsWith(":")) return void el("err", "unknown command: " + s + "  (try :help)");
   runPrompt(s);
 }
@@ -165,8 +170,8 @@ cmd.addEventListener("keydown", (e) => {
 
 document.addEventListener("click", () => cmd.focus());
 
-// let voice.js submit recognized speech through the normal command path
-window.Console = { submit: handle };
+// let voice.js submit recognized speech + print diagnostics through the console
+window.Console = { submit: handle, log: (m) => el("sys", m) };
 
 // boot
 el("sys", "claude-extension-service console — type :help. Enter to send. Voice: Ctrl+M to talk.");
