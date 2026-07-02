@@ -142,6 +142,11 @@ function handle(input) {
     else el("err", "voice module not loaded");
     return;
   }
+  if (s === ":voicereset") {
+    if (window.Voice && window.Voice.reset) window.Voice.reset();
+    else el("err", "voice module not loaded");
+    return;
+  }
   if (s.startsWith(":")) return void el("err", "unknown command: " + s + "  (try :help)");
   runPrompt(s);
 }

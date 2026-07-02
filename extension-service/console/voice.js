@@ -82,6 +82,7 @@
   if (hasTTS) {
     refreshVoices();
     try { speechSynthesis.onvoiceschanged = refreshVoices; } catch (_) {}
+    try { speechSynthesis.cancel(); } catch (_) {} // clear any stale/stuck state on load
   }
   function pickVoice() {
     if (!voices.length) refreshVoices();
@@ -97,6 +98,10 @@
     return (s || "").replace(/[`*_#>|]+/g, "").replace(/\s+/g, " ").trim();
   }
   let lastUtter = null; // keep a ref so Chrome doesn't GC the utterance mid-speech
+  let keepAlive = null;
+  function stopKeepAlive() {
+    if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
+  }
   function doSpeak(t) {
     const u = new SpeechSynthesisUtterance(t);
     u.rate = 1.03;
@@ -105,27 +110,36 @@
     // fail silently. Otherwise let the browser use its default.
     const v = pickVoice();
     if (v && v.localService) u.voice = v;
+    u.onend = stopKeepAlive;
     u.onerror = (e) => {
+      stopKeepAlive();
       const err = (e && e.error) || "";
       if (err && err !== "interrupted" && err !== "canceled") setBadge("tts: " + err);
     };
     lastUtter = u;
-    try { speechSynthesis.resume(); } catch (_) {} // Chrome sometimes auto-pauses
+    try { speechSynthesis.resume(); } catch (_) {}
     speechSynthesis.speak(u);
+    // Chrome auto-pauses long utterances (~15s) and can wedge; nudge it awake.
+    stopKeepAlive();
+    keepAlive = setInterval(() => {
+      if (!speechSynthesis.speaking) return stopKeepAlive();
+      try { speechSynthesis.resume(); } catch (_) {}
+    }, 8000);
   }
   function speak(text, force) {
     if (!voiceMode && !force) return;
     if (!hasTTS) { setBadge("no text-to-speech in this browser"); return; }
     const t = cleanForSpeech(text);
     if (!t) return;
-    const wasSpeaking = speechSynthesis.speaking || speechSynthesis.pending;
-    try { speechSynthesis.cancel(); } catch (_) {}
-    // Calling speak() in the same tick as cancel() drops the utterance in Chrome.
-    if (wasSpeaking) setTimeout(() => doSpeak(t), 120);
-    else doSpeak(t);
+    try { speechSynthesis.cancel(); } catch (_) {} // clear prior/stuck utterance
+    try { speechSynthesis.resume(); } catch (_) {}
+    // Always let cancel() settle a tick — a same-tick speak() after cancel()
+    // is dropped by Chrome.
+    setTimeout(() => doSpeak(t), 100);
   }
   function stopSpeaking() {
     if (!hasTTS) return;
+    stopKeepAlive();
     try { speechSynthesis.cancel(); } catch (_) {}
   }
 
@@ -204,14 +218,10 @@
     if (on) {
       audio(); // resume AudioContext on this user gesture
       refreshVoices();
-      // warm up the TTS engine inside the gesture so the first real reply speaks
+      // Clear any stuck engine state. Do NOT speak an empty/whitespace utterance
+      // to "warm up" — that wedges Chrome at speaking=true and blocks every reply.
       if (hasTTS) {
-        try {
-          speechSynthesis.cancel();
-          const w = new SpeechSynthesisUtterance(" ");
-          w.volume = 0;
-          speechSynthesis.speak(w);
-        } catch (_) {}
+        try { speechSynthesis.cancel(); } catch (_) {}
       }
     } else {
       stopListening(false);
@@ -264,6 +274,11 @@
     // test hook: speak regardless of voice mode (used by the :say command)
     say: (t) => speak(t && t.trim() ? t : "Voice check. One, two, three.", true),
     diag: diag,
+    reset: () => {
+      stopKeepAlive();
+      try { speechSynthesis.cancel(); } catch (_) {}
+      log("tts reset (cancelled + cleared). If still stuck, reload the page.");
+    },
   };
 
   function log(m) {
