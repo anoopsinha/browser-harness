@@ -22,6 +22,13 @@ body { display: flex; flex-direction: column; }
 #session { margin-left: auto; color: #5a6473; }
 
 .vstate { color: #c8a04f; font-size: 11px; }
+.vrate {
+  color: #8fb8e0;
+  font-size: 11px;
+  min-width: 34px;
+  text-align: center;
+  flex: 0 0 auto;
+}
 .vsel {
   font: inherit;
   font-size: 11px;

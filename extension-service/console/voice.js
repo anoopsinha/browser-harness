@@ -91,6 +91,16 @@
   let selectedVoiceName = null;
   try { selectedVoiceName = localStorage.getItem("ttsVoice"); } catch (_) {}
 
+  const RATE_MIN = 0.5, RATE_MAX = 2.0;
+  let rate = 1.0;
+  try {
+    const r = parseFloat(localStorage.getItem("ttsRate"));
+    if (!isNaN(r)) rate = r;
+  } catch (_) {}
+  function clampRate(r) {
+    return Math.min(RATE_MAX, Math.max(RATE_MIN, Math.round(r * 10) / 10));
+  }
+
   function refreshVoices() {
     if (!hasTTS) return;
     try { voices = speechSynthesis.getVoices() || []; } catch (_) {}
@@ -120,13 +130,15 @@
     return (s || "").replace(/[`*_#>|]+/g, "").replace(/\s+/g, " ").trim();
   }
   let lastUtter = null; // keep a ref so Chrome doesn't GC the utterance mid-speech
+  let lastText = "";    // last spoken text, for re-speaking on a rate change
   let keepAlive = null;
   function stopKeepAlive() {
     if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
   }
   function doSpeak(t) {
+    lastText = t;
     const u = new SpeechSynthesisUtterance(t);
-    u.rate = 1.03;
+    u.rate = rate;
     u.lang = "en-US";
     const v = resolveVoice();
     if (v) u.voice = v;
@@ -253,6 +265,19 @@
     render();
   }
   function setBadge(s) { if (badge) badge.textContent = s || ""; }
+  function updateRateUI() {
+    const rEl = document.getElementById("voiceRate");
+    if (rEl) rEl.textContent = rate.toFixed(1) + "×";
+  }
+  function setRate(r) {
+    rate = clampRate(r);
+    try { localStorage.setItem("ttsRate", String(rate)); } catch (_) {}
+    updateRateUI();
+    setBadge("rate " + rate.toFixed(1) + "×");
+    setTimeout(() => setBadge(""), 900);
+    // if a reply is playing, restart it at the new rate for immediate feedback
+    if (hasTTS && speechSynthesis.speaking && lastText) speak(lastText, true);
+  }
   function populateVoiceSelect() {
     const sel = document.getElementById("voiceSel");
     if (!sel) return;
@@ -301,6 +326,12 @@
     if (isTalkKey(e)) {
       e.preventDefault();
       toggleTalk();
+    } else if (e.ctrlKey && !e.metaKey && !e.altKey && (e.code === "Period" || e.key === ".")) {
+      e.preventDefault();
+      setRate(rate + 0.1); // faster
+    } else if (e.ctrlKey && !e.metaKey && !e.altKey && (e.code === "Comma" || e.key === ",")) {
+      e.preventDefault();
+      setRate(rate - 0.1); // slower
     } else if (e.key === "Escape") {
       if (listening) {
         e.preventDefault();
@@ -374,4 +405,5 @@
   }
   render();
   populateVoiceSelect();
+  updateRateUI();
 })();
