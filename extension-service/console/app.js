@@ -107,6 +107,7 @@ const HELP = `commands:
   <text>      send <text> to Claude via the service (continues the session)
   :new        start a fresh conversation (drops the session id)
   :health     re-check service status
+  :say [text] speak a phrase (test text-to-speech)
   :session    show the current session id
   :clear      clear the screen
   :help       this help`;
@@ -127,6 +128,14 @@ function handle(input) {
   if (s === ":health") {
     el("sys", "checking…");
     return void checkHealth();
+  }
+  if (s === ":say" || s.startsWith(":say ")) {
+    const t = s.slice(4).trim();
+    if (window.Voice && window.Voice.say) {
+      window.Voice.say(t);
+      el("sys", "speaking a test phrase… (Esc to stop)");
+    } else el("err", "voice module not loaded");
+    return;
   }
   if (s.startsWith(":")) return void el("err", "unknown command: " + s + "  (try :help)");
   runPrompt(s);

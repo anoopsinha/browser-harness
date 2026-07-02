@@ -73,22 +73,57 @@
   function blipListenOff() { blip(520, 0.09, 0, 0.05); }
 
   // ---------- text to speech ----------
+  const hasTTS = "speechSynthesis" in window;
+  let voices = [];
+  function refreshVoices() {
+    if (!hasTTS) return;
+    try { voices = speechSynthesis.getVoices() || []; } catch (_) {}
+  }
+  if (hasTTS) {
+    refreshVoices();
+    try { speechSynthesis.onvoiceschanged = refreshVoices; } catch (_) {}
+  }
+  function pickVoice() {
+    if (!voices.length) refreshVoices();
+    return (
+      voices.find((v) => v.default && /en/i.test(v.lang)) ||
+      voices.find((v) => /en[-_]/i.test(v.lang)) ||
+      voices[0] ||
+      null
+    );
+  }
+
   function cleanForSpeech(s) {
     return (s || "").replace(/[`*_#>|]+/g, "").replace(/\s+/g, " ").trim();
   }
-  function speak(text) {
-    if (!voiceMode) return;
+  let lastUtter = null; // keep a ref so Chrome doesn't GC the utterance mid-speech
+  function doSpeak(t) {
+    const u = new SpeechSynthesisUtterance(t);
+    u.rate = 1.03;
+    u.lang = "en-US";
+    const v = pickVoice();
+    if (v) u.voice = v;
+    u.onerror = (e) => {
+      const err = (e && e.error) || "";
+      if (err && err !== "interrupted" && err !== "canceled") setBadge("tts: " + err);
+    };
+    lastUtter = u;
+    try { speechSynthesis.resume(); } catch (_) {} // Chrome sometimes auto-pauses
+    speechSynthesis.speak(u);
+  }
+  function speak(text, force) {
+    if (!voiceMode && !force) return;
+    if (!hasTTS) { setBadge("no text-to-speech in this browser"); return; }
     const t = cleanForSpeech(text);
     if (!t) return;
-    try {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(t);
-      u.rate = 1.03;
-      u.lang = "en-US";
-      speechSynthesis.speak(u);
-    } catch (_) {}
+    const wasSpeaking = speechSynthesis.speaking || speechSynthesis.pending;
+    try { speechSynthesis.cancel(); } catch (_) {}
+    // Calling speak() in the same tick as cancel() drops the utterance in Chrome.
+    if (wasSpeaking) setTimeout(() => doSpeak(t), 120);
+    else doSpeak(t);
   }
   function stopSpeaking() {
+    if (!hasTTS) return;
     try { speechSynthesis.cancel(); } catch (_) {}
   }
 
@@ -164,8 +199,19 @@
   // ---------- state / UI ----------
   function setVoiceMode(on) {
     voiceMode = on;
-    if (on) audio(); // resume AudioContext on this user gesture
-    else {
+    if (on) {
+      audio(); // resume AudioContext on this user gesture
+      refreshVoices();
+      // warm up the TTS engine inside the gesture so the first real reply speaks
+      if (hasTTS) {
+        try {
+          speechSynthesis.cancel();
+          const w = new SpeechSynthesisUtterance(" ");
+          w.volume = 0;
+          speechSynthesis.speak(w);
+        } catch (_) {}
+      }
+    } else {
       stopListening(false);
       stopThinking();
       stopSpeaking();
@@ -213,6 +259,8 @@
       stopThinking();
       chimeError();
     },
+    // test hook: speak regardless of voice mode (used by the :say command)
+    say: (t) => speak(t && t.trim() ? t : "Voice check. One, two, three.", true),
   };
 
   render();
