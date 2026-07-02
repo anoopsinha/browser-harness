@@ -75,13 +75,18 @@
   // ---------- text to speech ----------
   const hasTTS = "speechSynthesis" in window;
   let voices = [];
-  // Only Google English voices are offered.
+  // Offered voices: Google English voices, plus Samantha and Karen (en-AU).
   function keepVoice(v) {
-    return /^Google/i.test(v.name) && /^en/i.test(v.lang);
+    return (
+      (/^Google/i.test(v.name) && /^en/i.test(v.lang)) ||
+      v.name === "Samantha" ||
+      v.name === "Karen"
+    );
   }
   // default preference order among the kept voices
   const PREFERRED_VOICES = [
     "Google US English", "Google UK English Female", "Google UK English Male",
+    "Samantha", "Karen",
   ];
   let selectedVoiceName = null;
   try { selectedVoiceName = localStorage.getItem("ttsVoice"); } catch (_) {}
