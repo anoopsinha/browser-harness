@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Claude Harness Trigger",
+  "version": "0.1.0",
+  "description": "Trigger Claude Code (browser-harness) on your current tab from a popup.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Claude Harness"
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1:8787/*",
+    "http://localhost:8787/*"
+  ]
+}

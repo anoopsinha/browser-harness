@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        width: 360px;
+        margin: 0;
+        padding: 12px;
+        font: 13px/1.45 -apple-system, system-ui, sans-serif;
+      }
+      h1 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 72px;
+        resize: vertical;
+        padding: 8px;
+        font: inherit;
+        border: 1px solid rgba(128, 128, 128, 0.4);
+        border-radius: 6px;
+      }
+      .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+      .row.spread { justify-content: space-between; }
+      button {
+        font: inherit;
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid rgba(128, 128, 128, 0.4);
+        cursor: pointer;
+      }
+      button.primary { background: #c96442; color: #fff; border-color: #c96442; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      label { display: flex; align-items: center; gap: 5px; user-select: none; }
+      #out {
+        margin-top: 10px;
+        padding: 8px;
+        border-radius: 6px;
+        background: rgba(128, 128, 128, 0.12);
+        white-space: pre-wrap;
+        word-break: break-word;
+        min-height: 20px;
+        max-height: 260px;
+        overflow: auto;
+      }
+      #meta { margin-top: 6px; font-size: 11px; opacity: 0.6; }
+      .err { color: #d33; }
+    </style>
+  </head>
+  <body>
+    <h1>Claude Harness Trigger</h1>
+    <textarea id="prompt" placeholder="e.g. Summarize this page. / Click the login button. / Extract all links."></textarea>
+    <div class="row spread">
+      <label><input type="checkbox" id="ctx" checked /> include page context</label>
+      <button id="newconv" title="Start a fresh conversation">New</button>
+    </div>
+    <div class="row">
+      <button id="run" class="primary">Run</button>
+      <span id="status"></span>
+    </div>
+    <div id="out"></div>
+    <div id="meta"></div>
+    <script src="config.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
