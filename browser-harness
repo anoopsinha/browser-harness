@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve this script's real location, following symlinks, so it works when
+# invoked via a symlink on PATH (e.g. ~/.local/bin or a venv console dir).
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -- "$(dirname -- "$SOURCE")" && pwd -P)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in /*) ;; *) SOURCE="$DIR/$SOURCE" ;; esac
+done
+ROOT="$(cd -- "$(dirname -- "$SOURCE")" && pwd -P)"
 DEV_ID="$(printf '%s' "$ROOT" | cksum | awk '{print $1}')"
 NAME="${BU_NAME:-default}"
 
@@ -23,6 +31,7 @@ if [ -z "${BH_TMP_DIR:-}" ]; then
 fi
 
 if [ -x "$ROOT/.venv/bin/python" ]; then
+  export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
   exec "$ROOT/.venv/bin/python" -m browser_harness.run "$@"
 fi
 
