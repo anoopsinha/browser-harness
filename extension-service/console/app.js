@@ -173,7 +173,11 @@ cmd.addEventListener("keydown", (e) => {
   }
 });
 
-document.addEventListener("click", () => cmd.focus());
+document.addEventListener("click", (e) => {
+  // don't steal focus from the bar controls (voice select / buttons)
+  if (e.target.closest && e.target.closest("#bar")) return;
+  cmd.focus();
+});
 
 // let voice.js submit recognized speech + print diagnostics through the console
 window.Console = { submit: handle, log: (m) => el("sys", m) };

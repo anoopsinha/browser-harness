@@ -75,20 +75,41 @@
   // ---------- text to speech ----------
   const hasTTS = "speechSynthesis" in window;
   let voices = [];
+  // macOS "Enhanced"/"Premium" voices sound far nicer than the default Samantha;
+  // prefer them when installed, else fall back to a decent default.
+  const PREFERRED_VOICES = [
+    "Ava (Premium)", "Ava (Enhanced)", "Zoe (Premium)", "Zoe (Enhanced)",
+    "Evan (Enhanced)", "Nathan (Enhanced)", "Samantha (Enhanced)",
+    "Allison (Enhanced)", "Serena (Premium)", "Serena (Enhanced)",
+    "Ava", "Allison", "Serena", "Samantha", "Karen", "Moira", "Tessa", "Daniel",
+  ];
+  let selectedVoiceName = null;
+  try { selectedVoiceName = localStorage.getItem("ttsVoice"); } catch (_) {}
+
   function refreshVoices() {
     if (!hasTTS) return;
     try { voices = speechSynthesis.getVoices() || []; } catch (_) {}
   }
   if (hasTTS) {
     refreshVoices();
-    try { speechSynthesis.onvoiceschanged = refreshVoices; } catch (_) {}
+    try {
+      speechSynthesis.onvoiceschanged = () => { refreshVoices(); populateVoiceSelect(); };
+    } catch (_) {}
     try { speechSynthesis.cancel(); } catch (_) {} // clear any stale/stuck state on load
   }
-  function pickVoice() {
+  function resolveVoice() {
     if (!voices.length) refreshVoices();
+    if (selectedVoiceName) {
+      const v = voices.find((x) => x.name === selectedVoiceName);
+      if (v) return v;
+    }
+    for (const name of PREFERRED_VOICES) {
+      const v = voices.find((x) => x.name === name);
+      if (v) return v;
+    }
     return (
-      voices.find((v) => v.default && /en/i.test(v.lang)) ||
-      voices.find((v) => /en[-_]/i.test(v.lang)) ||
+      voices.find((v) => v.default && /^en/i.test(v.lang)) ||
+      voices.find((v) => /^en/i.test(v.lang)) ||
       voices[0] ||
       null
     );
@@ -106,10 +127,8 @@
     const u = new SpeechSynthesisUtterance(t);
     u.rate = 1.03;
     u.lang = "en-US";
-    // Only force a voice if it's an on-device (local) one; remote voices can
-    // fail silently. Otherwise let the browser use its default.
-    const v = pickVoice();
-    if (v && v.localService) u.voice = v;
+    const v = resolveVoice();
+    if (v) u.voice = v;
     u.onend = stopKeepAlive;
     u.onerror = (e) => {
       stopKeepAlive();
@@ -215,6 +234,7 @@
   // ---------- state / UI ----------
   function setVoiceMode(on) {
     voiceMode = on;
+    try { localStorage.setItem("voiceMode", on ? "on" : "off"); } catch (_) {}
     if (on) {
       audio(); // resume AudioContext on this user gesture
       refreshVoices();
@@ -232,6 +252,27 @@
     render();
   }
   function setBadge(s) { if (badge) badge.textContent = s || ""; }
+  function populateVoiceSelect() {
+    const sel = document.getElementById("voiceSel");
+    if (!sel) return;
+    refreshVoices();
+    const en = voices.filter((v) => /^en/i.test(v.lang));
+    const list = en.length ? en : voices;
+    const resolved = resolveVoice();
+    sel.innerHTML = "";
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "auto: " + (resolved ? resolved.name : "default");
+    sel.appendChild(auto);
+    list.forEach((v) => {
+      const o = document.createElement("option");
+      o.value = v.name;
+      // mark the nicer Enhanced/Premium voices with a star
+      o.textContent = v.name.replace(/\s*\((Premium|Enhanced)\)/, " ★") + " · " + v.lang;
+      if (v.name === selectedVoiceName) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
   function render() {
     if (!btn) return;
     btn.classList.toggle("on", voiceMode);
@@ -245,6 +286,17 @@
 
   // ---------- wiring ----------
   if (btn) btn.addEventListener("click", () => setVoiceMode(!voiceMode));
+  const voiceSel = document.getElementById("voiceSel");
+  if (voiceSel) {
+    voiceSel.addEventListener("change", () => {
+      selectedVoiceName = voiceSel.value || null;
+      try {
+        if (selectedVoiceName) localStorage.setItem("ttsVoice", selectedVoiceName);
+        else localStorage.removeItem("ttsVoice");
+      } catch (_) {}
+      speak("Hi — this is how I sound.", true); // preview the chosen voice
+    });
+  }
   document.addEventListener("keydown", (e) => {
     if (isTalkKey(e)) {
       e.preventDefault();
@@ -313,5 +365,13 @@
     log("  called speak() — watch for onstart/onend/onerror above…");
   }
 
+  // default voice mode ON (but remember an explicit off), then fill the voice list
+  let startOn = true;
+  try { startOn = localStorage.getItem("voiceMode") !== "off"; } catch (_) {}
+  if (startOn && hasTTS) {
+    voiceMode = true;
+    refreshVoices();
+  }
   render();
+  populateVoiceSelect();
 })();

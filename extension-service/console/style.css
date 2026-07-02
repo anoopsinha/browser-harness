@@ -22,6 +22,17 @@ body { display: flex; flex-direction: column; }
 #session { margin-left: auto; color: #5a6473; }
 
 .vstate { color: #c8a04f; font-size: 11px; }
+.vsel {
+  font: inherit;
+  font-size: 11px;
+  max-width: 170px;
+  background: #161c28;
+  color: #8fb8e0;
+  border: 1px solid #2a3446;
+  border-radius: 6px;
+  padding: 2px 4px;
+  flex: 0 0 auto;
+}
 .vbtn {
   font: inherit;
   cursor: pointer;
