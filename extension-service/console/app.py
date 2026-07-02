@@ -40,14 +40,14 @@ def index():
     return send_from_directory(HERE, "index.html")
 
 
-@app.route("/app.js")
-def appjs():
-    return send_from_directory(HERE, "app.js")
+ASSETS = {"app.js", "voice.js", "style.css"}
 
 
-@app.route("/style.css")
-def css():
-    return send_from_directory(HERE, "style.css")
+@app.route("/<path:fn>")
+def asset(fn):
+    if fn in ASSETS:
+        return send_from_directory(HERE, fn)
+    return ("not found", 404)
 
 
 @app.route("/config.js")

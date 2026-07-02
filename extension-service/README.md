@@ -78,6 +78,22 @@ shows whether the service is up. Console commands: `:new` (fresh conversation),
 `:health`, `:session`, `:clear`, `:help`. Follow-up prompts continue the same
 Claude session until you `:new`.
 
+### Voice mode (optional)
+
+The console has hands-free voice I/O, all native browser APIs (Web Speech +
+Web Audio), off by default — typing is unaffected. Click **🎙 voice** in the bar,
+or just press the talk hotkey:
+
+- **Ctrl+M** — toggle listening: press to start talking, press again to stop and
+  send. First press turns voice mode on. Pressing it also **interrupts** any reply
+  that's currently being spoken.
+- **Esc** — stop listening without sending; also interrupts speech.
+
+When voice mode is on: replies are **spoken** (interruptible), and a soft
+**earcon pulses while Claude is thinking** so you know to wait, with a chime on
+completion and a buzz on error. Requires Chrome and microphone permission (granted
+on first use; `127.0.0.1` is a secure context so the mic is allowed).
+
 ## Security — read this
 
 This endpoint can run Claude Code, which can execute **Bash and edit files**.

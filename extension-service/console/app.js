@@ -55,6 +55,7 @@ async function runPrompt(prompt) {
     el("err", "No token loaded. Is ../.token present and the service running?");
     return;
   }
+  if (window.Voice) window.Voice.onThinkingStart();
   const running = el("running", "· running…");
   const t0 = performance.now();
   const timer = setInterval(() => {
@@ -75,11 +76,14 @@ async function runPrompt(prompt) {
     running.remove();
 
     if (!res.ok || !data.ok) {
-      el("err", "✗ " + (data.error || data.result || "HTTP " + res.status));
+      const msg = data.error || data.result || "HTTP " + res.status;
+      el("err", "✗ " + msg);
       if (data.stderr) el("meta", data.stderr);
+      if (window.Voice) window.Voice.onError(msg);
       return;
     }
     el("result", data.result ?? "(no text result)");
+    if (window.Voice) window.Voice.onResult(data.result ?? "");
     if (data.session_id) setSession(data.session_id);
     const bits = [
       (data.num_turns ?? "?") + " turns",
@@ -93,6 +97,9 @@ async function runPrompt(prompt) {
     running.remove();
     el("err", "✗ cannot reach the service at " + CFG.SERVICE_RUN + " — is server.py running? (" + e.message + ")");
     dot.className = "down";
+    if (window.Voice) window.Voice.onError(e.message);
+  } finally {
+    if (window.Voice) window.Voice.onThinkingStop();
   }
 }
 
@@ -149,8 +156,11 @@ cmd.addEventListener("keydown", (e) => {
 
 document.addEventListener("click", () => cmd.focus());
 
+// let voice.js submit recognized speech through the normal command path
+window.Console = { submit: handle };
+
 // boot
-el("sys", "claude-extension-service console — type :help. Enter to send.");
+el("sys", "claude-extension-service console — type :help. Enter to send. Voice: Ctrl+M to talk.");
 checkHealth();
 setInterval(checkHealth, 15000);
 setSession(null);

@@ -21,6 +21,26 @@ body { display: flex; flex-direction: column; }
 #target { color: #5a6473; }
 #session { margin-left: auto; color: #5a6473; }
 
+.vstate { color: #c8a04f; font-size: 11px; }
+.vbtn {
+  font: inherit;
+  cursor: pointer;
+  background: #161c28;
+  color: #8fb8e0;
+  border: 1px solid #2a3446;
+  border-radius: 6px;
+  padding: 3px 8px;
+  flex: 0 0 auto;
+}
+.vbtn.on { color: #7fb069; border-color: #3a5a34; }
+.vbtn.listening {
+  color: #fff;
+  background: #7a1e21;
+  border-color: #e5484d;
+  animation: vpulse 1s ease-in-out infinite;
+}
+@keyframes vpulse { 50% { opacity: 0.55; } }
+
 #dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 #dot.up { background: #7fb069; box-shadow: 0 0 6px #7fb069; }
 #dot.down { background: #e5484d; box-shadow: 0 0 6px #e5484d; }
