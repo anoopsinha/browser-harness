@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>harness console</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="bar">
+      <span id="dot" class="off" title="service status"></span>
+      <span class="title">claude-extension-service console</span>
+      <span id="target"></span>
+      <span id="session">no session</span>
+    </div>
+    <div id="screen" aria-live="polite"></div>
+    <div id="inputline">
+      <span id="ps1">harness$</span>
+      <input
+        id="cmd"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        placeholder="type a prompt for Claude, or :help"
+      />
+    </div>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

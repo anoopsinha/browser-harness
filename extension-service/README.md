@@ -61,6 +61,23 @@ curl -s http://127.0.0.1:8787/run \
 Response shape: `{ ok, result, session_id, num_turns, cost_usd, permission_denials }`.
 Pass `"session": "<session_id>"` on the next call to continue the conversation.
 
+## Verify it's running (web console)
+
+A terminal-style web console for smoke-testing the service lives in `console/`.
+It runs on its own port (8788) and calls the service **directly** — cross-origin,
+with the bearer token and an Origin header — exactly like the extension does, so
+it exercises the full public contract (CORS, Origin allowlist, auth). It auto-loads
+the token from `.token`, so there's nothing to paste.
+
+```bash
+cd console && ./run.sh          # reuses the service's venv; serves http://127.0.0.1:8788
+```
+
+Open http://127.0.0.1:8788, type a prompt, hit Enter. The status dot (top-left)
+shows whether the service is up. Console commands: `:new` (fresh conversation),
+`:health`, `:session`, `:clear`, `:help`. Follow-up prompts continue the same
+Claude session until you `:new`.
+
 ## Security — read this
 
 This endpoint can run Claude Code, which can execute **Bash and edit files**.
