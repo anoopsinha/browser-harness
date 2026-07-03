@@ -69,7 +69,8 @@ async function runPrompt(prompt) {
         "Content-Type": "application/json",
         Authorization: "Bearer " + CFG.TOKEN,
       },
-      body: JSON.stringify({ prompt, session: session || undefined }),
+      // keep all console commands in one dedicated working tab (server policy)
+      body: JSON.stringify({ prompt, session: session || undefined, tab_policy: "single" }),
     });
     const data = await res.json().catch(() => ({}));
     clearInterval(timer);

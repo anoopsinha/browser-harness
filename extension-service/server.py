@@ -44,6 +44,20 @@ SYSTEM_APPEND = os.environ.get(
     "browser-harness skill against the user's already-running Chrome. Keep the "
     "final answer short; it is shown in a small popup.",
 )
+# Appended for console requests (body tab_policy == "single") to keep one tab.
+CONSOLE_TAB_POLICY = os.environ.get(
+    "CLAUDE_CONSOLE_TAB_POLICY",
+    "Single-working-tab policy: you drive the user's Chrome for a terminal "
+    "console at http://127.0.0.1:8788 — never act on that console tab or the "
+    "user's unrelated tabs. Keep ONE dedicated working tab and reuse it for "
+    "every command in this conversation. Start by checking the current tab with "
+    "page_info(). If you have not opened a working tab yet (the current tab is "
+    "the console at :8788, a chrome:// page, or an unrelated page), open exactly "
+    "ONE new tab with new_tab() and treat it as the working tab. Otherwise the "
+    "current tab IS your working tab: navigate and act within it, do NOT open "
+    "another tab. Open an additional tab only if the user explicitly asks for a "
+    "new tab. Never open more than one tab per command.",
+)
 MAX_TURNS = os.environ.get("CLAUDE_MAX_TURNS", "50")
 TIMEOUT_S = int(os.environ.get("CLAUDE_TIMEOUT_S", "600"))
 
@@ -117,6 +131,10 @@ def run():
     session = (body.get("session") or "").strip()
     allowed = body.get("allowed_tools") or ALLOWED_TOOLS
 
+    system_append = SYSTEM_APPEND
+    if body.get("tab_policy") == "single" and CONSOLE_TAB_POLICY:
+        system_append = (system_append + "\n\n" + CONSOLE_TAB_POLICY).strip()
+
     cmd = [
         "claude", "-p", prompt,
         "--output-format", "json",
@@ -124,8 +142,8 @@ def run():
         "--allowedTools", allowed,
         "--max-turns", str(MAX_TURNS),
     ]
-    if SYSTEM_APPEND:
-        cmd += ["--append-system-prompt", SYSTEM_APPEND]
+    if system_append:
+        cmd += ["--append-system-prompt", system_append]
     if session:
         cmd += ["--resume", session]
 
