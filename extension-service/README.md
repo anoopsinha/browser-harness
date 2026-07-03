@@ -94,6 +94,13 @@ When voice mode is on: replies are **spoken** (interruptible), and a soft
 completion and a buzz on error. Requires Chrome and microphone permission (granted
 on first use; `127.0.0.1` is a secure context so the mic is allowed).
 
+While you're speaking a command, any **audio/video playing in the browser's tabs
+is paused** (so it doesn't overlap your voice) and **resumes once the spoken reply
+finishes**. This runs through browser-harness (the console page can't reach other
+tabs' media directly), via `POST /api/media/pause` and `/api/media/resume` on the
+console server. Only media in same-origin page DOM is paused — media inside
+cross-origin iframes (e.g. embedded YouTube players) can't be reached this way.
+
 ## Security — read this
 
 This endpoint can run Claude Code, which can execute **Bash and edit files**.

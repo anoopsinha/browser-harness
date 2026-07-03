@@ -72,6 +72,41 @@
   function blipListenOn() { blip(880, 0.09, 0, 0.06); }
   function blipListenOff() { blip(520, 0.09, 0, 0.05); }
 
+  // ---------- pause/resume page media while speaking input ----------
+  // Pause any playing audio/video in the browser's tabs while the user talks and
+  // while the reply is spoken, then resume. A tiny reconciler avoids a
+  // cancel-racing-the-pause stuck state; a 120s timer is a safety net.
+  let mediaHeld = false;   // we've paused media and owe a resume
+  let mediaBusy = false;   // a pause/resume request is in flight
+  let mediaDesired = false; // desired state: should media be paused right now?
+  let mediaTimer = null;
+  async function mediaReconcile() {
+    if (mediaBusy) return;
+    if (mediaDesired && !mediaHeld) {
+      mediaBusy = true;
+      try { await fetch("/api/media/pause", { method: "POST" }); } catch (_) {}
+      mediaHeld = true;
+      mediaBusy = false;
+      clearTimeout(mediaTimer);
+      mediaTimer = setTimeout(() => { mediaDesired = false; mediaReconcile(); }, 120000);
+      return mediaReconcile();
+    }
+    if (!mediaDesired && mediaHeld) {
+      mediaBusy = true;
+      try { await fetch("/api/media/resume", { method: "POST" }); } catch (_) {}
+      mediaHeld = false;
+      mediaBusy = false;
+      clearTimeout(mediaTimer);
+      return mediaReconcile();
+    }
+  }
+  function mediaPause() { mediaDesired = true; mediaReconcile(); }
+  function mediaResumeReq() { mediaDesired = false; mediaReconcile(); }
+  function resumeAfterReply() {
+    if (listening) return; // a new voice turn started — keep media paused
+    mediaResumeReq();
+  }
+
   // ---------- text to speech ----------
   const hasTTS = "speechSynthesis" in window;
   let voices = [];
@@ -142,11 +177,12 @@
     u.lang = "en-US";
     const v = resolveVoice();
     if (v) u.voice = v;
-    u.onend = stopKeepAlive;
+    u.onend = () => { stopKeepAlive(); resumeAfterReply(); };
     u.onerror = (e) => {
       stopKeepAlive();
       const err = (e && e.error) || "";
       if (err && err !== "interrupted" && err !== "canceled") setBadge("tts: " + err);
+      resumeAfterReply();
     };
     lastUtter = u;
     try { speechSynthesis.resume(); } catch (_) {}
@@ -159,10 +195,10 @@
     }, 8000);
   }
   function speak(text, force) {
-    if (!voiceMode && !force) return;
-    if (!hasTTS) { setBadge("no text-to-speech in this browser"); return; }
+    if (!voiceMode && !force) { resumeAfterReply(); return; }
+    if (!hasTTS) { setBadge("no text-to-speech in this browser"); resumeAfterReply(); return; }
     const t = cleanForSpeech(text);
-    if (!t) return;
+    if (!t) { resumeAfterReply(); return; }
     try { speechSynthesis.cancel(); } catch (_) {} // clear prior/stuck utterance
     try { speechSynthesis.resume(); } catch (_) {}
     // Always let cancel() settle a tick — a same-tick speak() after cancel()
@@ -223,6 +259,7 @@
     if (!rec) rec = makeRec();
     try { rec.start(); } catch (_) {}
     listening = true;
+    mediaPause(); // pause page audio/video so it doesn't overlap the user's voice
     setBadge("listening — Ctrl+M to send, Esc to cancel");
     blipListenOn();
     render();
@@ -238,6 +275,8 @@
     if (submit && text) {
       cmd.value = "";
       window.Console && window.Console.submit(text);
+    } else {
+      resumeAfterReply(); // nothing submitted → no reply is coming, resume media
     }
   }
   function toggleTalk() {
@@ -348,11 +387,14 @@
     onResult: (text) => {
       stopThinking();
       chimeDone();
-      speak(text);
+      const t = (text || "").trim();
+      if (t) speak(text);
+      else resumeAfterReply();
     },
     onError: () => {
       stopThinking();
       chimeError();
+      resumeAfterReply();
     },
     // test hook: speak regardless of voice mode (used by the :say command)
     say: (t) => speak(t && t.trim() ? t : "Voice check. One, two, three.", true),
