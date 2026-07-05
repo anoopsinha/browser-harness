@@ -892,6 +892,23 @@ function setupAssistantPanel() {
   const statusEl = document.getElementById('assistantStatus');
   if (!promptEl || !runBtn || !statusEl) return;
 
+  // Open the hands-free voice Assistant in a side panel. The click itself is the
+  // user gesture chrome.sidePanel.open() requires; it must run synchronously off
+  // the click before any awaited work, so we resolve the window id first.
+  const voicePanelBtn = document.getElementById('openVoicePanelBtn');
+  if (voicePanelBtn) {
+    if (!chrome.sidePanel?.open) {
+      voicePanelBtn.hidden = true;
+    } else {
+      voicePanelBtn.addEventListener('click', async () => {
+        try {
+          const w = await chrome.windows.getCurrent();
+          await chrome.sidePanel.open({ windowId: w.id });
+        } catch (e) { /* older Chrome or gesture lost — no-op */ }
+      });
+    }
+  }
+
   // Service settings collapsible toggle (mirrors the API Keys section).
   const svcSection = document.getElementById('serviceSettingsSection');
   svcSection?.addEventListener('click', (e) => {

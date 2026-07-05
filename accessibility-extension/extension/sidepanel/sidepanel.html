@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Assistant</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="vp-header">
+    <h1 class="vp-title">🎤 Voice Assistant</h1>
+    <p class="vp-sub" id="voiceHint">Hands-free. Press <kbd>Ctrl</kbd>+<kbd>M</kbd> or the mic to talk.</p>
+  </header>
+
+  <main class="vp-main">
+    <!-- Voice controls -->
+    <div class="vp-controls" role="group" aria-label="Voice controls">
+      <button id="micBtn" class="vp-mic" type="button"
+              aria-pressed="false" aria-label="Start or stop listening (Ctrl+M)">
+        <span class="vp-mic-glyph" aria-hidden="true">🎙</span>
+        <span class="vp-mic-label" id="micLabel">voice on</span>
+      </button>
+
+      <label class="vp-toggle" title="Turn voice mode on or off">
+        <input type="checkbox" id="voiceModeToggle" checked>
+        <span>Voice mode</span>
+      </label>
+
+      <div class="vp-voicepick">
+        <label for="voiceSel" class="vp-visually-hidden">Voice</label>
+        <select id="voiceSel" aria-label="Text-to-speech voice"></select>
+        <span id="voiceRate" class="vp-rate" title="Speaking rate — Ctrl+. faster, Ctrl+, slower" aria-live="polite">1.0×</span>
+      </div>
+    </div>
+
+    <div class="vp-badge" id="voiceState" role="status" aria-live="polite"></div>
+
+    <!-- Task input -->
+    <div class="assistant-field vp-field">
+      <label for="assistantPrompt">Ask the Assistant to do something on this page</label>
+      <textarea id="assistantPrompt" rows="3"
+        placeholder="Speak, or type a task — e.g. Summarize this article"></textarea>
+    </div>
+    <div class="assistant-actions">
+      <button class="btn btn-primary btn-sm" id="assistantRunBtn" type="button">Run on this page</button>
+      <button class="btn btn-secondary btn-sm" id="assistantClearBtn" type="button" hidden>Clear</button>
+    </div>
+
+    <!-- Live log + result (same shape as the popup) -->
+    <div class="assistant-status-region" id="assistantStatus" role="log" aria-live="polite" aria-label="Assistant activity"></div>
+  </main>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
