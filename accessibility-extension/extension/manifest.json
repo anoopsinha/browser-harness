@@ -23,6 +23,12 @@
   "background": {
     "service_worker": "background.js"
   },
+  "commands": {
+    "toggle-voice": {
+      "suggested_key": { "default": "Ctrl+M", "mac": "MacCtrl+M" },
+      "description": "Toggle Voice Assistant listening"
+    }
+  },
   "side_panel": {
     "default_path": "sidepanel/sidepanel.html"
   },

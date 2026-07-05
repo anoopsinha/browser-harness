@@ -13,6 +13,16 @@ self.importScripts(
 Datastore.runMigrations().catch((e) =>
   console.warn('[AgenticA11y] datastore migrations failed:', e.message));
 
+// Global keyboard shortcut (Ctrl+M) → toggle listening in an open side panel,
+// even while the web page (not the panel) is focused. chrome.commands fires
+// regardless of focus; we relay it to the panel via a runtime message.
+if (chrome.commands && chrome.commands.onCommand) {
+  chrome.commands.onCommand.addListener((command) => {
+    if (command !== 'toggle-voice') return;
+    chrome.runtime.sendMessage({ type: 'toggleVoice' }, () => { void chrome.runtime.lastError; });
+  });
+}
+
 const GEMINI_MODEL = 'gemini-3.1-flash-image-preview';
 
 function getApiUrl(apiKey, model) {

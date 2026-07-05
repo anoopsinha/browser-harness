@@ -386,6 +386,16 @@
     }
   }
   function toggleTalk() { listening ? stopListening(true) : startListening(); }
+  // Ctrl+M can arrive from the panel keydown AND the global chrome.commands
+  // shortcut at the same time when the panel is focused — debounce so the two
+  // don't cancel each other out.
+  let lastToggle = 0;
+  function requestToggle() {
+    const now = Date.now();
+    if (now - lastToggle < 350) return;
+    lastToggle = now;
+    toggleTalk();
+  }
 
   // ---------- state / UI ----------
   function setVoiceMode(on) {
@@ -465,7 +475,7 @@
   document.addEventListener('keydown', (e) => {
     if (isTalkKey(e)) {
       e.preventDefault();
-      toggleTalk();
+      requestToggle();
     } else if (e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'Period' || e.key === '.')) {
       e.preventDefault();
       setRate(rate + 0.1); // faster
@@ -476,6 +486,12 @@
       if (listening) { e.preventDefault(); stopListening(false); }
       stopSpeaking();
     }
+  });
+
+  // Global shortcut (chrome.commands) relayed from the background service worker,
+  // so Ctrl+M toggles listening even while the web page (not the panel) is focused.
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === 'toggleVoice') requestToggle();
   });
 
   // =====================================================================
