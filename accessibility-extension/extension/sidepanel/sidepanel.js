@@ -266,11 +266,12 @@
     u.lang = 'en-US';
     const v = resolveVoice();
     if (v) u.voice = v;
-    u.onend = () => { stopKeepAlive(); };
+    u.onend = () => { stopKeepAlive(); maybeResumeMedia(); };
     u.onerror = (e) => {
       stopKeepAlive();
       const err = (e && e.error) || '';
       if (err && err !== 'interrupted' && err !== 'canceled') setBadge('tts: ' + err);
+      maybeResumeMedia();
     };
     lastUtter = u;
     try { speechSynthesis.resume(); } catch (_) {}
@@ -298,6 +299,54 @@
     stopKeepAlive();
     try { speechSynthesis.cancel(); } catch (_) {}
   }
+
+  // ---------- pause page media while giving voice input + during the reply ----------
+  // Inject into the active tab and any audible tab (all frames, so embedded
+  // players are covered) to pause playing media while the user talks and until
+  // the spoken reply finishes; only elements we paused are resumed.
+  let mediaHeld = false, mediaBusy = false, mediaDesired = false, mediaTabIds = [], mediaTimer = null;
+  function _pauseInPage() {
+    document.querySelectorAll('video,audio').forEach((m) => {
+      if (!m.paused && !m.ended) { m.setAttribute('data-a11y-vpaused', '1'); m.pause(); }
+    });
+  }
+  function _resumeInPage() {
+    document.querySelectorAll('[data-a11y-vpaused]').forEach((m) => {
+      m.removeAttribute('data-a11y-vpaused');
+      const p = m.play(); if (p && p.catch) p.catch(() => {});
+    });
+  }
+  async function _mediaTargets() {
+    const ids = new Set();
+    try { const [a] = await chrome.tabs.query({ active: true, currentWindow: true }); if (a && a.id != null) ids.add(a.id); } catch (_) {}
+    try { (await chrome.tabs.query({ audible: true })).forEach((t) => { if (t.id != null) ids.add(t.id); }); } catch (_) {}
+    return [...ids];
+  }
+  async function _inject(ids, func) {
+    await Promise.all(ids.map((id) =>
+      chrome.scripting.executeScript({ target: { tabId: id, allFrames: true }, func }).catch(() => {})));
+  }
+  async function mediaReconcile() {
+    if (mediaBusy) return;
+    if (mediaDesired && !mediaHeld) {
+      mediaBusy = true;
+      mediaTabIds = await _mediaTargets();
+      await _inject(mediaTabIds, _pauseInPage);
+      mediaHeld = true; mediaBusy = false;
+      clearTimeout(mediaTimer);
+      mediaTimer = setTimeout(() => { mediaDesired = false; mediaReconcile(); }, 120000); // safety net
+      return mediaReconcile();
+    }
+    if (!mediaDesired && mediaHeld) {
+      mediaBusy = true;
+      await _inject(mediaTabIds, _resumeInPage);
+      mediaHeld = false; mediaBusy = false;
+      clearTimeout(mediaTimer);
+      return mediaReconcile();
+    }
+  }
+  function mediaPause() { mediaDesired = true; mediaReconcile(); }
+  function maybeResumeMedia() { if (listening) return; mediaDesired = false; mediaReconcile(); }
 
   // ---------- speech recognition ----------
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -361,13 +410,15 @@
     if (!SR) { setVoiceMode(true); setBadge('no speech recognition in this browser'); return; }
     if (!voiceMode) setVoiceMode(true);
     if (listening) return;
+    listening = true;   // set before the await so a cancelled reply won't resume media
+    mediaPause();       // pause page media while talking + until the reply is spoken
+    renderMic();
     setBadge('requesting microphone…');
-    if (!(await ensureMic())) return; // prompt for/confirm the mic grant first
+    if (!(await ensureMic())) { listening = false; maybeResumeMedia(); renderMic(); return; }
     finalTranscript = '';
     promptEl.value = '';
     if (!rec) rec = makeRec();
     try { rec.start(); } catch (_) {}
-    listening = true;
     setBadge('listening — Ctrl+M to send, Esc to cancel');
     blipListenOn();
     renderMic();
@@ -383,6 +434,8 @@
     if (submit && text) {
       // transcript stays in the textarea AND is auto-submitted as the task
       runTask(text);
+    } else {
+      maybeResumeMedia(); // nothing submitted → no reply is coming, resume media
     }
   }
   function toggleTalk() { listening ? stopListening(true) : startListening(); }
@@ -508,12 +561,14 @@
       stopThinking();
       chimeDone();
       const t = (state && state.result || '').trim();
-      if (t) speak(t); // interruptible via Ctrl+M / Esc
+      if (t) speak(t); // interruptible; media resumes when the speech ends
+      else maybeResumeMedia();
     } else if (status === 'error') {
       stopThinking();
       chimeError();
       const err = (state && state.error || '').trim();
       if (err) speak('Something went wrong. ' + err);
+      else maybeResumeMedia();
     }
     lastStatus = status;
   }
