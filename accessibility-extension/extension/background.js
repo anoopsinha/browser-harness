@@ -147,6 +147,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // --- Assistant: agentic browser task via local extension-service ---
+  // Posts the prompt to the Flask service (extension-service) which drives the
+  // user's Chrome through browser-harness. chrome.storage.local.assistant is
+  // the source of truth for the popup's status/result view so a result still
+  // shows if the popup was closed while the task ran.
+  if (msg.type === 'assistantRun') {
+    (async () => {
+      const task = msg.prompt;
+      const { serviceUrl = 'http://127.0.0.1:8787', serviceToken } =
+        await chrome.storage.sync.get(['serviceUrl', 'serviceToken']);
+
+      if (!serviceToken) {
+        const state = { status: 'error', task, error: 'Assistant not configured — set the service token in settings.' };
+        await chrome.storage.local.set({ assistant: state });
+        sendResponse(state);
+        return;
+      }
+
+      await chrome.storage.local.set({ assistant: { status: 'running', task } });
+
+      let state;
+      try {
+        const res = await fetch(serviceUrl.replace(/\/$/, '') + '/run', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + serviceToken,
+          },
+          body: JSON.stringify({ prompt: task, tab_policy: 'active', active_url: msg.activeUrl || '' }),
+        });
+        let data = {};
+        try { data = await res.json(); } catch (_) { /* non-JSON body */ }
+        if (res.ok && data.ok) {
+          state = { status: 'done', task, result: data.result };
+        } else {
+          state = { status: 'error', task, error: data.error || ('HTTP ' + res.status) };
+        }
+      } catch (e) {
+        state = { status: 'error', task, error: "Can't reach the Assistant service at " + serviceUrl + ' — is extension-service running?' };
+      }
+
+      await chrome.storage.local.set({ assistant: state });
+      sendResponse(state);
+    })();
+    return true;
+  }
+
+  if (msg.type === 'assistantClear') {
+    chrome.storage.local.remove('assistant', () => sendResponse({ ok: true }));
+    return true;
+  }
+
   if (msg.type === 'getActiveSkills') {
     chrome.storage.local.get(['activeSkills', 'customSkills'], (data) => {
       sendResponse({

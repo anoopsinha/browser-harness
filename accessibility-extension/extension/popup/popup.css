@@ -495,6 +495,41 @@ footer {
 }
 .profile-action-item .action-delete:hover { color: var(--red); }
 
+/* Assistant panel */
+.assistant-desc { font-size: 11px; color: var(--grey-700); margin-bottom: 8px; line-height: 1.4; }
+.assistant-field { margin-bottom: 8px; }
+.assistant-field textarea {
+  width: 100%; padding: 8px; border: 1px solid var(--grey-300);
+  border-radius: 6px; font: inherit; font-size: 12px; line-height: 1.4;
+  background: white; color: var(--grey-900); resize: vertical; min-height: 56px;
+}
+.assistant-field textarea:focus {
+  border-color: var(--blue); outline: 2px solid var(--blue); outline-offset: -2px;
+}
+.assistant-field textarea::placeholder { color: var(--grey-500); font-style: italic; }
+.assistant-actions { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.assistant-status-region:empty { display: none; }
+.assistant-status-region {
+  border: 1px solid var(--grey-200); border-radius: 6px; padding: 8px 10px;
+  background: white; font-size: 12px; line-height: 1.45; margin-bottom: 6px;
+}
+.assistant-state-head {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.assistant-state-head .material-symbols-outlined { font-size: 16px; }
+.assistant-state-running .assistant-state-head { color: var(--blue); }
+.assistant-state-done .assistant-state-head { color: var(--green); }
+.assistant-state-error .assistant-state-head { color: var(--red); }
+.assistant-task { color: var(--grey-500); font-size: 11px; margin-top: 4px; font-style: italic; word-break: break-word; }
+.assistant-result, .assistant-error { color: var(--grey-900); margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+.assistant-error { color: var(--red); }
+.assistant-hint { color: var(--grey-700); font-size: 11px; margin-top: 6px; line-height: 1.4; }
+.assistant-hint code {
+  background: var(--grey-100); padding: 1px 4px; border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+}
+
 /* Accessibility */
 *:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 @media (forced-colors: active) {

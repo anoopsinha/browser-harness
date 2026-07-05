@@ -872,7 +872,138 @@ document.addEventListener('DOMContentLoaded', async () => {
   // memories grouped by where they apply, and standing "don't suggest"
   // instructions. All plain language; raw records stay in storage.
   setupMemoryPanel();
+
+  // Assistant: agentic browser task sent to the local extension-service.
+  setupAssistantPanel();
 });
+
+// Assistant panel: service settings (serviceUrl/serviceToken in storage.sync)
+// plus a task box that hands off to background's assistantRun. The live view is
+// driven off chrome.storage.local.assistant so a result that arrives after the
+// popup was closed still shows when it reopens.
+function setupAssistantPanel() {
+  const DEFAULT_URL = 'http://127.0.0.1:8787';
+  const urlInput = document.getElementById('serviceUrlInput');
+  const tokenInput = document.getElementById('serviceTokenInput');
+  const saveBtn = document.getElementById('saveServiceBtn');
+  const promptEl = document.getElementById('assistantPrompt');
+  const runBtn = document.getElementById('assistantRunBtn');
+  const clearBtn = document.getElementById('assistantClearBtn');
+  const statusEl = document.getElementById('assistantStatus');
+  if (!promptEl || !runBtn || !statusEl) return;
+
+  // Service settings collapsible toggle (mirrors the API Keys section).
+  const svcSection = document.getElementById('serviceSettingsSection');
+  svcSection?.addEventListener('click', (e) => {
+    if (e.target.closest('.collapsible-header')) svcSection.classList.toggle('open');
+  });
+  svcSection?.querySelector('.collapsible-header')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); svcSection.classList.toggle('open'); }
+  });
+
+  // Load + persist service settings (storage.sync).
+  chrome.storage.sync.get(['serviceUrl', 'serviceToken'], (data) => {
+    if (urlInput) urlInput.value = data.serviceUrl || DEFAULT_URL;
+    if (tokenInput) tokenInput.value = data.serviceToken || '';
+  });
+  function saveService() {
+    const serviceUrl = (urlInput?.value || '').trim() || DEFAULT_URL;
+    const serviceToken = (tokenInput?.value || '').trim();
+    chrome.storage.sync.set({ serviceUrl, serviceToken });
+  }
+  urlInput?.addEventListener('change', saveService);
+  tokenInput?.addEventListener('change', saveService);
+  saveBtn?.addEventListener('click', () => {
+    saveService();
+    saveBtn.textContent = 'Saved!';
+    saveBtn.classList.add('success');
+    setTimeout(() => { saveBtn.textContent = 'Save'; saveBtn.classList.remove('success'); }, 1500);
+  });
+
+  // icon is a Material Symbols name from the restricted set loaded in
+  // popup.html (icon_names=...); pass null to skip the glyph.
+  function mkHead(cls, icon, label, spin) {
+    const head = document.createElement('div');
+    head.className = 'assistant-state-head ' + cls;
+    if (icon) {
+      const ic = document.createElement('span');
+      ic.className = 'material-symbols-outlined' + (spin ? ' spin' : '');
+      ic.setAttribute('aria-hidden', 'true');
+      ic.textContent = icon;
+      head.appendChild(ic);
+    }
+    head.appendChild(document.createTextNode(label));
+    return head;
+  }
+
+  function render(state) {
+    statusEl.textContent = '';
+    const status = state?.status;
+    runBtn.disabled = status === 'running';
+    if (clearBtn) clearBtn.hidden = !state;
+    if (!state) return;
+
+    if (status === 'running') {
+      statusEl.className = 'assistant-status-region assistant-state-running';
+      statusEl.appendChild(mkHead('', 'sync', ' Working on it…', true));
+    } else if (status === 'done') {
+      statusEl.className = 'assistant-status-region assistant-state-done';
+      statusEl.appendChild(mkHead('', 'check_circle', ' Done'));
+      const body = document.createElement('div');
+      body.className = 'assistant-result';
+      body.textContent = state.result || 'The Assistant finished.';
+      statusEl.appendChild(body);
+    } else if (status === 'error') {
+      statusEl.className = 'assistant-status-region assistant-state-error';
+      statusEl.appendChild(mkHead('', null, 'Something went wrong'));
+      const body = document.createElement('div');
+      body.className = 'assistant-error';
+      body.textContent = state.error || 'Unknown error.';
+      statusEl.appendChild(body);
+      if (/service/i.test(state.error || '')) {
+        const hint = document.createElement('div');
+        hint.className = 'assistant-hint';
+        hint.innerHTML = 'Start the service with <code>extension-service/run.sh</code>, then try again.';
+        statusEl.appendChild(hint);
+      }
+    } else {
+      statusEl.className = 'assistant-status-region';
+    }
+
+    if (state.task && status !== 'error') {
+      const t = document.createElement('div');
+      t.className = 'assistant-task';
+      t.textContent = state.task;
+      statusEl.appendChild(t);
+    }
+  }
+
+  // Initial state + live updates (result may arrive after the popup reopens).
+  chrome.storage.local.get('assistant', (d) => render(d.assistant || null));
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.assistant) render(changes.assistant.newValue || null);
+  });
+
+  runBtn.addEventListener('click', async () => {
+    const prompt = promptEl.value.trim();
+    if (!prompt) { promptEl.focus(); return; }
+    runBtn.disabled = true;
+    render({ status: 'running', task: prompt });
+    let activeUrl = '';
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      activeUrl = tab?.url || '';
+    } catch (e) {}
+    chrome.runtime.sendMessage({ type: 'assistantRun', prompt, activeUrl }, () => {
+      void chrome.runtime.lastError; // storage.local.assistant is the source of truth
+    });
+  });
+
+  clearBtn?.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'assistantClear' }, () => { void chrome.runtime.lastError; });
+    render(null);
+  });
+}
 
 function sendMessageP(msg) {
   return new Promise((resolve) => {

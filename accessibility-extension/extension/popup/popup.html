@@ -50,6 +50,47 @@
       <span class="material-symbols-outlined spin" aria-hidden="true">sync</span> Thinking&hellip;
     </div>
 
+    <!-- Assistant: agentic browser task via local extension-service -->
+    <section class="section" id="assistantSection">
+      <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+        <span class="section-title">Assistant</span>
+        <span class="section-arrow">&#9660;</span>
+      </div>
+      <div class="section-body">
+        <p class="assistant-desc" id="assistantDesc">The Assistant drives your browser for you through your local service.</p>
+        <div class="input-group assistant-field">
+          <label for="assistantPrompt">Ask the Assistant to do something on this page</label>
+          <textarea id="assistantPrompt" rows="3" aria-describedby="assistantDesc"
+            placeholder="e.g. Summarize this article and open the author's other posts"></textarea>
+        </div>
+        <div class="assistant-actions">
+          <button class="btn btn-primary btn-sm" id="assistantRunBtn">Run on this page</button>
+          <button class="btn btn-secondary btn-sm" id="assistantClearBtn" hidden>Clear</button>
+        </div>
+        <div class="assistant-status-region" id="assistantStatus" role="status" aria-live="polite"></div>
+
+        <!-- Service settings -->
+        <div class="collapsible" id="serviceSettingsSection">
+          <div class="collapsible-header" role="button" tabindex="0" aria-expanded="false">
+            <span class="material-symbols-outlined" style="font-size:18px;color:var(--grey-500)">build</span>
+            <span style="flex:1;font-size:12px">Service settings</span>
+            <span class="coll-arrow material-symbols-outlined">chevron_right</span>
+          </div>
+          <div class="collapsible-body">
+            <div class="input-group" style="margin-bottom:8px">
+              <label for="serviceUrlInput">Assistant service URL</label>
+              <input type="text" id="serviceUrlInput" placeholder="http://127.0.0.1:8787" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="input-group" style="margin-bottom:8px">
+              <label for="serviceTokenInput">Assistant token</label>
+              <input type="password" id="serviceTokenInput" placeholder="Service auth token" autocomplete="off">
+            </div>
+            <button class="btn btn-primary btn-sm" id="saveServiceBtn">Save</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- My Profiles -->
     <section class="section" id="myProfilesSection" hidden>
       <div class="section-header" role="button" tabindex="0" aria-expanded="true">

@@ -66,6 +66,16 @@ CONSOLE_TAB_POLICY = os.environ.get(
     "another tab. Open an additional tab only if the user explicitly asks for a "
     "new tab. Never open more than one tab per command.",
 )
+# Appended for accessibility-extension requests (body tab_policy == "active"):
+# act on the user's current page, not a fresh working tab.
+ACTIVE_TAB_POLICY = os.environ.get(
+    "SERVICE_ACTIVE_TAB_POLICY",
+    "Active-tab policy: operate ONLY on the user's current tab — the page they "
+    "are viewing right now. Do NOT open a new tab. Use browser-harness to locate "
+    "that tab (list_tabs()/current_tab(), and switch_tab() to it if the harness "
+    "is attached elsewhere), then do the task within it. Only open a new tab if "
+    "the user explicitly asks for one.",
+)
 TIMEOUT_S = int(os.environ.get("SERVICE_TIMEOUT_S", "600"))
 
 
@@ -179,11 +189,19 @@ def run():
         return _cors(jsonify({"ok": False, "error": "missing prompt"}), origin), 400
     session = (body.get("session") or "").strip()
 
+    tab_policy = body.get("tab_policy")
+    active_url = (body.get("active_url") or "").strip()
+
     parts = []
     if SYSTEM_PREAMBLE:
         parts.append(SYSTEM_PREAMBLE)
-    if body.get("tab_policy") == "single" and CONSOLE_TAB_POLICY:
+    if tab_policy == "single" and CONSOLE_TAB_POLICY:
         parts.append(CONSOLE_TAB_POLICY)
+    elif tab_policy == "active" and ACTIVE_TAB_POLICY:
+        policy = ACTIVE_TAB_POLICY
+        if active_url:
+            policy += f"\nThe user's current tab URL is: {active_url}"
+        parts.append(policy)
     parts.append(prompt)
     full_prompt = "\n\n".join(parts)
 
