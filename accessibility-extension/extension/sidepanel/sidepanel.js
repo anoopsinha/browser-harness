@@ -322,18 +322,40 @@
     r.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         listening = false;
-        setBadge('mic blocked — allow microphone access');
+        micGranted = false; // force a fresh permission request next time
+        setBadge('mic blocked — click the mic and choose Allow');
         renderMic();
       }
     };
     return r;
   }
 
-  function startListening() {
+  // SpeechRecognition in an extension side panel never prompts on its own and
+  // throws not-allowed without a mic grant. Requesting getUserMedia on the
+  // user's click triggers Chrome's permission prompt for the extension origin;
+  // once granted, recognition works. We stop the stream immediately — we only
+  // needed the grant.
+  let micGranted = false;
+  async function ensureMic() {
+    if (micGranted) return true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      micGranted = true;
+      return true;
+    } catch (_) {
+      setBadge('microphone permission denied — allow it and try again');
+      return false;
+    }
+  }
+
+  async function startListening() {
     stopSpeaking(); // the input hotkey interrupts any playing speech
     if (!SR) { setVoiceMode(true); setBadge('no speech recognition in this browser'); return; }
     if (!voiceMode) setVoiceMode(true);
     if (listening) return;
+    setBadge('requesting microphone…');
+    if (!(await ensureMic())) return; // prompt for/confirm the mic grant first
     finalTranscript = '';
     promptEl.value = '';
     if (!rec) rec = makeRec();
