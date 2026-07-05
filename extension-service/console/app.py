@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone web console (terminal UI) to exercise the claude-extension-service.
+Standalone web console (terminal UI) to exercise the gemini-extension-service.
 
 Runs on its own port (default 8788) and serves a page whose JavaScript calls the
 service **directly** — cross-origin, with the bearer token and an Origin header —
@@ -28,7 +28,7 @@ PORT = int(os.environ.get("CONSOLE_PORT", "8788"))
 
 
 def token() -> str:
-    t = os.environ.get("CLAUDE_SERVICE_TOKEN")
+    t = os.environ.get("SERVICE_TOKEN")
     if t:
         return t
     f = HERE.parent / ".token"
@@ -136,5 +136,5 @@ def media_resume():
 if __name__ == "__main__":
     print(f"console  → http://{HOST}:{PORT}   (targets {SERVICE_URL})")
     if not token():
-        print("WARNING: no token (../.token missing and CLAUDE_SERVICE_TOKEN unset)")
+        print("WARNING: no token (../.token missing and SERVICE_TOKEN unset)")
     app.run(host=HOST, port=PORT, threaded=True)

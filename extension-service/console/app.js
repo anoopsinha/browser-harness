@@ -105,7 +105,7 @@ async function runPrompt(prompt) {
 }
 
 const HELP = `commands:
-  <text>      send <text> to Claude via the service (continues the session)
+  <text>      send <text> to Gemini via the service (continues the session)
   :new        start a fresh conversation (drops the session id)
   :health     re-check service status
   :say [text] speak a phrase (test text-to-speech)
@@ -184,7 +184,7 @@ document.addEventListener("click", (e) => {
 window.Console = { submit: handle, log: (m) => el("sys", m) };
 
 // boot
-el("sys", "claude-extension-service console — type :help. Enter to send. Voice: Ctrl+M to talk.");
+el("sys", "gemini-extension-service console — type :help. Enter to send. Voice: Ctrl+M to talk.");
 checkHealth();
 setInterval(checkHealth, 15000);
 setSession(null);

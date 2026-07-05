@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 """
-Local web service that wraps Claude Code so a browser extension can trigger it.
+Local web service that wraps Gemini CLI so a browser extension can trigger it.
 
-Model A (thin trigger): the extension sends a natural-language prompt; Claude Code
+Model A (thin trigger): the extension sends a natural-language prompt; Gemini CLI
 does the actual browser work via the browser-harness skill (CDP into your Chrome).
 This service does NOT touch the browser itself — it only relays a prompt to
-`claude -p` and returns the result.
+`gemini -p` and returns the result.
 
-SECURITY: this endpoint can run Claude Code, which can execute Bash and edit
-files. It is gated by three things:
+Gemini specifics handled here:
+  - runs `gemini -p <prompt> -y --output-format json` from an agent workspace
+    (extension-service/agent-workspace/) that pins API-key auth via a local
+    .gemini/settings.json and carries the browser-harness skill in GEMINI.md;
+  - parses Gemini's JSON ({session_id, response, stats}), tolerating the banner
+    lines Gemini prints before the JSON;
+  - session continuity uses `-r latest` (Gemini resume takes latest/index, not a
+    session UUID), so "continue this conversation" maps to the most recent run
+    from the workspace.
+
+SECURITY: this endpoint can run Gemini CLI in YOLO mode, which can execute shell
+commands. It is gated by three things:
   1. bound to 127.0.0.1 only (never exposed off-box),
   2. a bearer token (treat it like a password),
   3. an Origin check (chrome-extension:// / localhost only).
@@ -26,27 +36,25 @@ from flask import Flask, request, jsonify, make_response
 HERE = Path(__file__).resolve().parent
 
 # ---- config (all env-overridable) ----
-HOST = os.environ.get("CLAUDE_SERVICE_HOST", "127.0.0.1")
-PORT = int(os.environ.get("CLAUDE_SERVICE_PORT", "8787"))
-# Run claude from the repo root by default so it has sane project context and the
-# local `browser-harness` wrapper is on hand. The skill itself loads globally.
-WORKDIR = os.environ.get("CLAUDE_SERVICE_CWD", str(HERE.parent))
-PERMISSION_MODE = os.environ.get("CLAUDE_PERMISSION_MODE", "acceptEdits")
-# Tools Claude may use without prompting. Bash is what the browser-harness skill
-# uses to drive Chrome. Tighten this to reduce blast radius (see README).
-ALLOWED_TOOLS = os.environ.get(
-    "CLAUDE_ALLOWED_TOOLS", "Bash,Read,Write,Edit,Glob,Grep,WebFetch"
-)
-SYSTEM_APPEND = os.environ.get(
-    "CLAUDE_SYSTEM_APPEND",
-    "You are being driven from a browser extension. For any browser action "
-    "(navigate, click, read a page, screenshot, scrape, fill a form), use the "
-    "browser-harness skill against the user's already-running Chrome. Keep the "
-    "final answer short; it is shown in a small popup.",
+HOST = os.environ.get("SERVICE_HOST", "127.0.0.1")
+PORT = int(os.environ.get("SERVICE_PORT", "8787"))
+# Gemini runs from this workspace: it holds .gemini/settings.json (pins
+# gemini-api-key auth, overriding a global oauth login) and GEMINI.md (the
+# browser-harness skill as context). run.sh generates GEMINI.md on startup.
+AGENT_WS = os.environ.get("AGENT_WORKSPACE", str(HERE / "agent-workspace"))
+GEMINI_BIN = os.environ.get("GEMINI_BIN", "gemini")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "")  # empty → gemini's default
+# Prepended to every prompt (Gemini has no --append-system-prompt; GEMINI.md also
+# carries guidance, this is a short reinforcement).
+SYSTEM_PREAMBLE = os.environ.get(
+    "SERVICE_SYSTEM_PREAMBLE",
+    "For any browser action (navigate, click, read a page, screenshot, scrape, "
+    "fill a form), use the browser-harness tool against the user's already-running "
+    "Chrome. Keep the final answer short; it is shown in a small popup.",
 )
 # Appended for console requests (body tab_policy == "single") to keep one tab.
 CONSOLE_TAB_POLICY = os.environ.get(
-    "CLAUDE_CONSOLE_TAB_POLICY",
+    "SERVICE_CONSOLE_TAB_POLICY",
     "Single-working-tab policy: you drive the user's Chrome for a terminal "
     "console at http://127.0.0.1:8788 — never act on that console tab or the "
     "user's unrelated tabs. Keep ONE dedicated working tab and reuse it for "
@@ -58,12 +66,26 @@ CONSOLE_TAB_POLICY = os.environ.get(
     "another tab. Open an additional tab only if the user explicitly asks for a "
     "new tab. Never open more than one tab per command.",
 )
-MAX_TURNS = os.environ.get("CLAUDE_MAX_TURNS", "50")
-TIMEOUT_S = int(os.environ.get("CLAUDE_TIMEOUT_S", "600"))
+TIMEOUT_S = int(os.environ.get("SERVICE_TIMEOUT_S", "600"))
+
+
+def load_gemini_key():
+    """Take GEMINI_API_KEY from the repo .env as the source of truth (it may be
+    fresher than a stale exported value)."""
+    envf = HERE.parent / ".env"
+    if not envf.exists():
+        return
+    for line in envf.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("GEMINI_API_KEY="):
+            v = line.split("=", 1)[1].strip().strip('"').strip("'")
+            if v:
+                os.environ["GEMINI_API_KEY"] = v
+            return
 
 
 def load_or_create_token() -> str:
-    tok = os.environ.get("CLAUDE_SERVICE_TOKEN")
+    tok = os.environ.get("SERVICE_TOKEN")
     if tok:
         return tok
     tok_file = HERE / ".token"
@@ -75,6 +97,7 @@ def load_or_create_token() -> str:
     return tok
 
 
+load_gemini_key()
 TOKEN = load_or_create_token()
 app = Flask(__name__)
 
@@ -105,9 +128,35 @@ def _auth_ok(req) -> bool:
     return hmac.compare_digest(auth[len(prefix):], TOKEN)
 
 
+def _extract_json(text):
+    """Gemini prints banner/startup lines before the JSON object; scan for the
+    first '{' that decodes into a dict shaped like a Gemini result."""
+    dec = json.JSONDecoder()
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, _ = dec.raw_decode(text, i)
+            if isinstance(obj, dict) and ("response" in obj or "session_id" in obj):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        i = text.find("{", i + 1)
+    return None
+
+
+def _num_turns(stats) -> int:
+    try:
+        return sum(
+            m.get("api", {}).get("totalRequests", 0)
+            for m in (stats or {}).get("models", {}).values()
+        ) or None
+    except Exception:
+        return None
+
+
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"ok": True, "service": "claude-extension-service"})
+    return jsonify({"ok": True, "service": "gemini-extension-service"})
 
 
 @app.route("/run", methods=["OPTIONS"])
@@ -129,74 +178,65 @@ def run():
     if not prompt:
         return _cors(jsonify({"ok": False, "error": "missing prompt"}), origin), 400
     session = (body.get("session") or "").strip()
-    allowed = body.get("allowed_tools") or ALLOWED_TOOLS
 
-    system_append = SYSTEM_APPEND
+    parts = []
+    if SYSTEM_PREAMBLE:
+        parts.append(SYSTEM_PREAMBLE)
     if body.get("tab_policy") == "single" and CONSOLE_TAB_POLICY:
-        system_append = (system_append + "\n\n" + CONSOLE_TAB_POLICY).strip()
+        parts.append(CONSOLE_TAB_POLICY)
+    parts.append(prompt)
+    full_prompt = "\n\n".join(parts)
 
-    cmd = [
-        "claude", "-p", prompt,
-        "--output-format", "json",
-        "--permission-mode", PERMISSION_MODE,
-        "--allowedTools", allowed,
-        "--max-turns", str(MAX_TURNS),
-    ]
-    if system_append:
-        cmd += ["--append-system-prompt", system_append]
+    cmd = [GEMINI_BIN, "-p", full_prompt, "-y", "--output-format", "json"]
+    if GEMINI_MODEL:
+        cmd += ["-m", GEMINI_MODEL]
     if session:
-        cmd += ["--resume", session]
+        cmd += ["-r", "latest"]  # Gemini resume: latest/index, not a UUID
 
     try:
         proc = subprocess.run(
-            cmd, cwd=WORKDIR, capture_output=True, text=True, timeout=TIMEOUT_S
+            cmd, cwd=AGENT_WS, capture_output=True, text=True, timeout=TIMEOUT_S
         )
     except subprocess.TimeoutExpired:
         return _cors(
-            jsonify({"ok": False, "error": f"claude timed out after {TIMEOUT_S}s"}),
+            jsonify({"ok": False, "error": f"gemini timed out after {TIMEOUT_S}s"}),
             origin,
         ), 504
 
-    if proc.returncode != 0 and not proc.stdout:
-        return _cors(
-            jsonify({"ok": False, "error": "claude failed", "stderr": proc.stderr[-2000:]}),
-            origin,
-        ), 500
-
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
+    data = _extract_json(proc.stdout) or _extract_json(proc.stdout + "\n" + proc.stderr)
+    if data is None:
         return _cors(
             jsonify({
                 "ok": False,
-                "error": "unparseable claude output",
-                "raw": proc.stdout[-2000:],
-                "stderr": proc.stderr[-1000:],
+                "error": "gemini produced no parseable result",
+                "raw": proc.stdout[-1500:],
+                "stderr": proc.stderr[-1500:],
             }),
             origin,
         ), 500
 
+    resp = data.get("response")
     out = {
-        "ok": not data.get("is_error", False),
-        "result": data.get("result"),
+        "ok": resp is not None,
+        "result": resp,
         "session_id": data.get("session_id"),
-        "num_turns": data.get("num_turns"),
-        "cost_usd": data.get("total_cost_usd"),
-        "permission_denials": data.get("permission_denials"),
+        "num_turns": _num_turns(data.get("stats")),
+        "cost_usd": None,  # Gemini CLI JSON reports tokens, not a dollar cost
     }
     return _cors(jsonify(out), origin), (200 if out["ok"] else 500)
 
 
 if __name__ == "__main__":
     line = "=" * 64
+    key_state = "set" if os.environ.get("GEMINI_API_KEY") else "MISSING"
     print(line)
-    print("  claude-extension-service")
+    print("  gemini-extension-service")
     print(f"  listening   http://{HOST}:{PORT}")
     print(f"  token       {TOKEN}")
-    print(f"  workdir     {WORKDIR}")
-    print(f"  tools       {ALLOWED_TOOLS}")
-    print(f"  perm mode   {PERMISSION_MODE}")
+    print(f"  workspace   {AGENT_WS}")
+    print(f"  model       {GEMINI_MODEL or '(gemini default)'}")
+    print(f"  GEMINI_API_KEY {key_state}")
     print("  SECURITY: token-gated, localhost-only. Anyone with the token can")
-    print("            run Claude Code (Bash + file edits). Keep it private.")
+    print("            run Gemini CLI in YOLO mode (shell exec). Keep it private.")
     print(line)
     app.run(host=HOST, port=PORT, threaded=True)

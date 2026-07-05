@@ -1,23 +1,26 @@
-# claude-extension-service
+# gemini-extension-service
 
-A tiny local web service that lets a **browser extension trigger Claude Code**,
+A tiny local web service that lets a **browser extension trigger Gemini CLI**,
 which in turn drives your real Chrome through the **browser-harness** skill.
 
 This is the **Model A (thin trigger)** design: the extension is just a UI. It
 sends a natural-language prompt to `http://127.0.0.1:8787/run`; the service
-shells out to `claude -p`; Claude does the browser work via browser-harness
+shells out to `gemini -p`; Gemini does the browser work via browser-harness
 (CDP into your already-running Chrome) and returns a text result.
 
 ```
-Extension popup ──HTTP(+token)──▶ Flask (127.0.0.1) ──▶ claude -p ──▶ browser-harness ──CDP──▶ your Chrome
+Extension popup ──HTTP(+token)──▶ Flask (127.0.0.1) ──▶ gemini -p ──▶ browser-harness ──CDP──▶ your Chrome
 ```
 
 ## Prerequisites
 
-- `claude` CLI on PATH and already logged in (headless `claude -p` reuses your
-  existing login — no API key needed).
-- The browser-harness skill wired into Claude Code (it is, via your global
-  `~/.claude/CLAUDE.md`).
+- `gemini` CLI on PATH (Google Gemini CLI).
+- A **`GEMINI_API_KEY`** (Google AI Studio) in the repo `.env` — the service
+  loads it and pins `gemini-api-key` auth via `agent-workspace/.gemini/settings.json`
+  (so it works even if your global Gemini login is on a deprecated tier). Your
+  global `~/.gemini/settings.json` is left untouched.
+- The browser-harness skill: the service generates `agent-workspace/GEMINI.md`
+  from `browser-harness skill` on each start, so Gemini knows how to drive it.
 - Chrome running with remote debugging (same setup browser-harness already uses).
 
 ## 1. Start the service
@@ -26,12 +29,16 @@ Extension popup ──HTTP(+token)──▶ Flask (127.0.0.1) ──▶ claude -
 ./run.sh
 ```
 
-First run creates a `.venv`, installs Flask, and starts the server. It prints a
+First run creates a `.venv`, installs Flask, loads `GEMINI_API_KEY` from `.env`,
+regenerates `agent-workspace/GEMINI.md`, and starts the server. It prints a
 **token** (also saved to `extension-service/.token`). Copy that token.
 
-Config is via env vars (all optional): `CLAUDE_SERVICE_PORT`,
-`CLAUDE_SERVICE_TOKEN`, `CLAUDE_ALLOWED_TOOLS`, `CLAUDE_PERMISSION_MODE`,
-`CLAUDE_SERVICE_CWD`, `CLAUDE_TIMEOUT_S`, `CLAUDE_MAX_TURNS`.
+Config is via env vars (all optional): `SERVICE_PORT`, `SERVICE_TOKEN`,
+`GEMINI_MODEL`, `AGENT_WORKSPACE`, `SERVICE_TIMEOUT_S`, `SERVICE_SYSTEM_PREAMBLE`.
+
+> **Session note:** Gemini resume takes `latest`/index (not a session UUID), so
+> "continue this conversation" maps to `gemini -r latest` — the most recent run
+> from the agent workspace. Fine for one sequential conversation at a time.
 
 ## 2. Point the extension at your token
 
@@ -46,7 +53,7 @@ Edit `extension/config.js` and paste the token into `TOKEN`.
 
 Type a prompt, hit **Run** (or ⌘/Ctrl+Enter). "include page context" attaches
 the active tab's URL/title and any selected text. **New** starts a fresh
-conversation; otherwise follow-ups continue the same Claude session.
+conversation; otherwise follow-ups continue the same Gemini session.
 
 ## Try it without the extension
 
@@ -76,7 +83,7 @@ cd console && ./run.sh          # reuses the service's venv; serves http://127.0
 Open http://127.0.0.1:8788, type a prompt, hit Enter. The status dot (top-left)
 shows whether the service is up. Console commands: `:new` (fresh conversation),
 `:health`, `:session`, `:clear`, `:help`. Follow-up prompts continue the same
-Claude session until you `:new`.
+Gemini session until you `:new`.
 
 ### Voice mode (optional)
 
@@ -90,7 +97,7 @@ or just press the talk hotkey:
 - **Esc** — stop listening without sending; also interrupts speech.
 
 When voice mode is on: replies are **spoken** (interruptible), and a soft
-**earcon pulses while Claude is thinking** so you know to wait, with a chime on
+**earcon pulses while the agent is thinking** so you know to wait, with a chime on
 completion and a buzz on error. Requires Chrome and microphone permission (granted
 on first use; `127.0.0.1` is a secure context so the mic is allowed).
 
@@ -103,30 +110,25 @@ cross-origin iframes (e.g. embedded YouTube players) can't be reached this way.
 
 ## Security — read this
 
-This endpoint can run Claude Code, which can execute **Bash and edit files**.
-It is protected by three things; do not weaken them:
+This endpoint runs Gemini CLI in **YOLO mode** (`-y`), which auto-approves tool
+calls including **shell execution**. It is protected by three things; do not
+weaken them:
 
 1. **Localhost only.** Bound to `127.0.0.1`. Never bind to `0.0.0.0` or expose the port.
 2. **Bearer token.** Treat `.token` like a password. It is gitignored.
 3. **Origin check.** Only `chrome-extension://` and localhost origins are accepted.
 
 CORS does not stop a malicious page from *sending* a request to localhost, so the
-token is the real gate. To shrink the blast radius, tighten the allowed tools —
-e.g. restrict Bash to the harness:
-
-```bash
-CLAUDE_ALLOWED_TOOLS='Bash(browser-harness*),Read' ./run.sh
-```
-
-(Start permissive to confirm it works, then tighten.) Avoid
-`--dangerously-skip-permissions`; this service intentionally does not use it.
+token is the real gate. To shrink the blast radius you can constrain what the
+agent may run via Gemini's policy engine (`--policy` / `--approval-mode`) instead
+of blanket `-y` — start permissive to confirm it works, then tighten.
 
 ## Upgrade paths (later)
 
 - **Live progress:** switch `/run` to Server-Sent Events by reading
-  `claude -p --output-format stream-json` line-by-line and forwarding events.
-- **Embed the SDK:** replace the subprocess with `claude-agent-sdk` on an async
-  server (FastAPI/Quart) for first-class streaming and session management.
+  `gemini -p --output-format stream-json` line-by-line and forwarding events.
+- **Scoped tools:** replace `-y` with a Gemini policy that only allows the
+  `browser-harness` shell command, for a tighter blast radius.
 
 ## Files
 
