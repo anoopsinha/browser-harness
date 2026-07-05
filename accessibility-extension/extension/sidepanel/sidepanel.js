@@ -85,7 +85,9 @@
   function render(state) {
     statusEl.textContent = '';
     const status = state && state.status;
-    runBtn.disabled = status === 'running';
+    taskRunning = status === 'running';
+    runBtn.textContent = taskRunning ? '⏹ Stop' : 'Run on this page';
+    runBtn.disabled = false; // stays clickable while running so it can Stop
     if (clearBtn) clearBtn.hidden = !state;
     if (!state) { statusEl.className = 'assistant-status-region'; return; }
 
@@ -133,11 +135,14 @@
   }
 
   // Run a task: same handoff as the popup. Shared by the button and by voice.
+  let taskRunning = false;
+  function cancelTask() {
+    chrome.runtime.sendMessage({ type: 'assistantCancel' }, () => { void chrome.runtime.lastError; });
+  }
   async function runTask(prompt) {
     const text = (prompt || '').trim();
     if (!text) { promptEl.focus(); return; }
     promptEl.value = text;
-    runBtn.disabled = true;
     render({ status: 'running', task: text, log: [] });
     let activeUrl = '';
     try {
@@ -149,7 +154,10 @@
     });
   }
 
-  runBtn.addEventListener('click', () => runTask(promptEl.value));
+  runBtn.addEventListener('click', () => {
+    if (taskRunning) cancelTask();
+    else runTask(promptEl.value);
+  });
   clearBtn && clearBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'assistantClear' }, () => { void chrome.runtime.lastError; });
     render(null);
@@ -538,6 +546,7 @@
     } else if (e.key === 'Escape') {
       if (listening) { e.preventDefault(); stopListening(false); }
       stopSpeaking();
+      if (taskRunning) cancelTask(); // interrupt a running browser-harness task
     }
   });
 

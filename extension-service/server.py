@@ -28,6 +28,7 @@ import hmac
 import json
 import os
 import secrets
+import signal
 import subprocess
 from pathlib import Path
 
@@ -250,6 +251,42 @@ def run():
     return _cors(jsonify(out), origin), (200 if out["ok"] else 500)
 
 
+# In-flight /stream subprocesses, so POST /cancel can kill a running task
+# (the streaming generator blocks on gemini's stdout, so it can't notice a
+# client disconnect promptly — an explicit cancel is the reliable interrupt).
+_running = set()
+
+
+def _kill_proc(proc):
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+
+@app.route("/cancel", methods=["OPTIONS"])
+def cancel_preflight():
+    origin = request.headers.get("Origin", "")
+    return _cors(make_response("", 204), origin)
+
+
+@app.route("/cancel", methods=["POST"])
+def cancel():
+    origin = request.headers.get("Origin", "")
+    if not _origin_ok(origin):
+        return _cors(jsonify({"ok": False, "error": "bad origin"}), origin), 403
+    if not _auth_ok(request):
+        return _cors(jsonify({"ok": False, "error": "unauthorized"}), origin), 401
+    killed = 0
+    for proc in list(_running):
+        _kill_proc(proc)
+        killed += 1
+    return _cors(jsonify({"ok": True, "killed": killed}), origin)
+
+
 @app.route("/stream", methods=["OPTIONS"])
 def stream_preflight():
     origin = request.headers.get("Origin", "")
@@ -272,19 +309,21 @@ def stream():
     def generate():
         # Stream gemini's newline-delimited JSON events straight through as
         # NDJSON. stderr (banner/startup noise) is dropped so stdout is clean.
+        # start_new_session so we can kill the whole group (gemini + the
+        # browser-harness child it spawns) when the client disconnects (the
+        # generator is closed) — that's how the extension's Stop works.
         proc = subprocess.Popen(
             cmd, cwd=AGENT_WS, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            text=True, bufsize=1,
+            text=True, bufsize=1, start_new_session=True,
         )
+        _running.add(proc)  # so POST /cancel can kill it
         try:
             for line in proc.stdout:
                 if line.strip():
                     yield line if line.endswith("\n") else line + "\n"
         finally:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
+            _running.discard(proc)
+            _kill_proc(proc)
 
     resp = Response(generate(), mimetype="application/x-ndjson")
     return _cors(resp, origin)

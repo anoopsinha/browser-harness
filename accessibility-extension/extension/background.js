@@ -25,6 +25,11 @@ if (chrome.commands && chrome.commands.onCommand) {
 
 const GEMINI_MODEL = 'gemini-3.1-flash-image-preview';
 
+// Abort controller for the in-flight Assistant /stream fetch, so Stop/Esc can
+// interrupt a running task (aborting the fetch disconnects the service, which
+// kills the gemini process group).
+let assistantAbort = null;
+
 function getApiUrl(apiKey, model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model || GEMINI_MODEL}:generateContent?key=${apiKey}`;
 }
@@ -216,6 +221,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       try {
+        assistantAbort = new AbortController();
         const res = await fetch(base + '/stream', {
           method: 'POST',
           headers: {
@@ -223,6 +229,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             'Authorization': 'Bearer ' + serviceToken,
           },
           body: JSON.stringify({ prompt: task, tab_policy: 'active', active_url: msg.activeUrl || '' }),
+          signal: assistantAbort.signal,
         });
         if (!res.ok || !res.body) {
           let err = 'HTTP ' + res.status;
@@ -252,11 +259,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await persist(true);
         sendResponse(state);
       } catch (e) {
-        state.status = 'error';
-        state.error = "Can't reach the Assistant service at " + serviceUrl + ' — is extension-service running?';
+        if (e && e.name === 'AbortError') {
+          // User pressed Stop / Esc: keep the partial result, mark it stopped.
+          state.status = 'done';
+          if (!state.result) state.result = finalAnswer();
+          state.log.push({ kind: 'assistant', text: '⏹ Stopped.' });
+        } else {
+          state.status = 'error';
+          state.error = "Can't reach the Assistant service at " + serviceUrl + ' — is extension-service running?';
+        }
         await persist(true);
         sendResponse(state);
+      } finally {
+        assistantAbort = null;
       }
+    })();
+    return true;
+  }
+
+  if (msg.type === 'assistantCancel') {
+    try { if (assistantAbort) assistantAbort.abort(); } catch (_) {}
+    (async () => {
+      // Also tell the service to kill the gemini process group — aborting the
+      // fetch alone doesn't stop it promptly (the stream blocks on stdout).
+      try {
+        const { serviceUrl = 'http://127.0.0.1:8787', serviceToken } =
+          await chrome.storage.sync.get(['serviceUrl', 'serviceToken']);
+        if (serviceToken) {
+          await fetch(serviceUrl.replace(/\/$/, '') + '/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + serviceToken },
+          }).catch(() => {});
+        }
+      } catch (_) {}
+      sendResponse({ ok: true });
     })();
     return true;
   }
