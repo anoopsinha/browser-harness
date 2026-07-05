@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Enable microphone — Voice Assistant</title>
+    <style>
+      body { font: 16px/1.6 system-ui, -apple-system, sans-serif; margin: 48px auto; max-width: 560px; padding: 0 20px; color: #1a1a1a; }
+      h1 { font-size: 20px; }
+      button { font: inherit; padding: 10px 18px; border-radius: 8px; border: 1px solid #c96442; background: #c96442; color: #fff; cursor: pointer; }
+      button:focus-visible { outline: 3px solid #1a73e8; outline-offset: 2px; }
+      #msg { margin-top: 18px; }
+      .ok { color: #137333; } .err { color: #c5221f; }
+      @media (prefers-color-scheme: dark) { body { background: #1b1b1b; color: #e8e8e8; } }
+    </style>
+  </head>
+  <body>
+    <h1>Enable the microphone for the Voice Assistant</h1>
+    <p>The voice assistant lives in the side panel, but Chrome only shows the
+      microphone prompt in a normal tab. Click the button below and choose
+      <b>Allow</b>. You only need to do this once.</p>
+    <button id="go">Enable microphone</button>
+    <p id="msg" role="status" aria-live="polite"></p>
+    <script src="mic.js"></script>
+  </body>
+</html>

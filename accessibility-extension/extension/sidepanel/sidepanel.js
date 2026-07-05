@@ -344,7 +344,12 @@
       micGranted = true;
       return true;
     } catch (_) {
-      setBadge('microphone permission denied — allow it and try again');
+      // The docked side panel can't reliably surface Chrome's mic prompt, so
+      // getUserMedia throws even though the state is "prompt". Grant it in a
+      // normal tab (the prompt works there); the grant applies to the whole
+      // extension origin, so the panel can use the mic afterwards.
+      try { chrome.tabs.create({ url: chrome.runtime.getURL('permission/mic.html') }); } catch (_) {}
+      setBadge('opened a tab to enable the mic — click Allow there, then press the mic again');
       return false;
     }
   }
