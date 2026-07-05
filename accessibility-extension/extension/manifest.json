@@ -27,6 +27,10 @@
     "toggle-voice": {
       "suggested_key": { "default": "Ctrl+M", "mac": "MacCtrl+M" },
       "description": "Toggle Voice Assistant listening"
+    },
+    "stop-task": {
+      "suggested_key": { "default": "Ctrl+Shift+M", "mac": "MacCtrl+Shift+M" },
+      "description": "Stop the running Assistant task"
     }
   },
   "side_panel": {

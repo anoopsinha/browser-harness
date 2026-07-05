@@ -546,7 +546,6 @@
     } else if (e.key === 'Escape') {
       if (listening) { e.preventDefault(); stopListening(false); }
       stopSpeaking();
-      if (taskRunning) cancelTask(); // interrupt a running browser-harness task
     }
   });
 

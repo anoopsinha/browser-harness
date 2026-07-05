@@ -18,17 +18,36 @@ Datastore.runMigrations().catch((e) =>
 // regardless of focus; we relay it to the panel via a runtime message.
 if (chrome.commands && chrome.commands.onCommand) {
   chrome.commands.onCommand.addListener((command) => {
-    if (command !== 'toggle-voice') return;
-    chrome.runtime.sendMessage({ type: 'toggleVoice' }, () => { void chrome.runtime.lastError; });
+    if (command === 'toggle-voice') {
+      chrome.runtime.sendMessage({ type: 'toggleVoice' }, () => { void chrome.runtime.lastError; });
+    } else if (command === 'stop-task') {
+      cancelAssistant(); // global Ctrl+Shift+M — works even while the page is focused
+    }
   });
 }
 
 const GEMINI_MODEL = 'gemini-3.1-flash-image-preview';
 
-// Abort controller for the in-flight Assistant /stream fetch, so Stop/Esc can
-// interrupt a running task (aborting the fetch disconnects the service, which
-// kills the gemini process group).
+// Abort controller for the in-flight Assistant /stream fetch, so Stop can
+// interrupt a running task.
 let assistantAbort = null;
+
+// Interrupt a running Assistant task: abort the stream fetch AND tell the
+// service to kill the gemini process group (the fetch abort alone doesn't stop
+// it promptly). Reused by the assistantCancel message and the stop-task command.
+async function cancelAssistant() {
+  try { if (assistantAbort) assistantAbort.abort(); } catch (_) {}
+  try {
+    const { serviceUrl = 'http://127.0.0.1:8787', serviceToken } =
+      await chrome.storage.sync.get(['serviceUrl', 'serviceToken']);
+    if (serviceToken) {
+      await fetch(serviceUrl.replace(/\/$/, '') + '/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + serviceToken },
+      }).catch(() => {});
+    }
+  } catch (_) {}
+}
 
 function getApiUrl(apiKey, model) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model || GEMINI_MODEL}:generateContent?key=${apiKey}`;
@@ -278,22 +297,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'assistantCancel') {
-    try { if (assistantAbort) assistantAbort.abort(); } catch (_) {}
-    (async () => {
-      // Also tell the service to kill the gemini process group — aborting the
-      // fetch alone doesn't stop it promptly (the stream blocks on stdout).
-      try {
-        const { serviceUrl = 'http://127.0.0.1:8787', serviceToken } =
-          await chrome.storage.sync.get(['serviceUrl', 'serviceToken']);
-        if (serviceToken) {
-          await fetch(serviceUrl.replace(/\/$/, '') + '/cancel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + serviceToken },
-          }).catch(() => {});
-        }
-      } catch (_) {}
-      sendResponse({ ok: true });
-    })();
+    cancelAssistant().then(() => sendResponse({ ok: true }));
     return true;
   }
 
