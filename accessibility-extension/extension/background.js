@@ -165,11 +165,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
 
-      await chrome.storage.local.set({ assistant: { status: 'running', task } });
+      const base = serviceUrl.replace(/\/$/, '');
+      // state.log is a live trace: agent narration + each browser-harness
+      // command + its result — rendered console-style in the popup.
+      const state = { status: 'running', task, log: [], result: '' };
+      await chrome.storage.local.set({ assistant: state });
 
-      let state;
+      // Throttle persistence so streamed text deltas don't hammer storage.
+      let lastPersist = 0;
+      async function persist(force) {
+        const now = Date.now();
+        if (!force && now - lastPersist < 200) return;
+        lastPersist = now;
+        await chrome.storage.local.set({ assistant: state });
+      }
+      function finalAnswer() {
+        for (let i = state.log.length - 1; i >= 0; i--) {
+          if (state.log[i].kind === 'assistant') return (state.log[i].text || '').trim();
+        }
+        return '';
+      }
+      function onEvent(ev) {
+        if (ev.type === 'message' && ev.role === 'assistant') {
+          const last = state.log[state.log.length - 1];
+          if (last && last.kind === 'assistant') last.text += ev.content || '';
+          else state.log.push({ kind: 'assistant', text: ev.content || '' });
+        } else if (ev.type === 'tool_use') {
+          state.log.push({
+            kind: 'tool',
+            name: ev.tool_name,
+            command: (ev.parameters && ev.parameters.command) || '',
+          });
+        } else if (ev.type === 'tool_result') {
+          state.log.push({ kind: 'tool_result', status: ev.status });
+        } else if (ev.type === 'result') {
+          state.status = ev.status === 'error' ? 'error' : 'done';
+          state.result = finalAnswer();
+        }
+        // 'init' and role:'user' echoes are ignored.
+      }
+
       try {
-        const res = await fetch(serviceUrl.replace(/\/$/, '') + '/run', {
+        const res = await fetch(base + '/stream', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -177,19 +214,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           },
           body: JSON.stringify({ prompt: task, tab_policy: 'active', active_url: msg.activeUrl || '' }),
         });
-        let data = {};
-        try { data = await res.json(); } catch (_) { /* non-JSON body */ }
-        if (res.ok && data.ok) {
-          state = { status: 'done', task, result: data.result };
-        } else {
-          state = { status: 'error', task, error: data.error || ('HTTP ' + res.status) };
+        if (!res.ok || !res.body) {
+          let err = 'HTTP ' + res.status;
+          try { const d = await res.json(); err = d.error || err; } catch (_) {}
+          state.status = 'error'; state.error = err;
+          await persist(true); sendResponse(state); return;
         }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (!line) continue;
+            let ev; try { ev = JSON.parse(line); } catch (_) { continue; }
+            onEvent(ev);
+            await persist(ev.type === 'tool_use' || ev.type === 'tool_result' || ev.type === 'result');
+          }
+        }
+        if (state.status === 'running') state.status = 'done';
+        if (!state.result) state.result = finalAnswer();
+        await persist(true);
+        sendResponse(state);
       } catch (e) {
-        state = { status: 'error', task, error: "Can't reach the Assistant service at " + serviceUrl + ' — is extension-service running?' };
+        state.status = 'error';
+        state.error = "Can't reach the Assistant service at " + serviceUrl + ' — is extension-service running?';
+        await persist(true);
+        sendResponse(state);
       }
-
-      await chrome.storage.local.set({ assistant: state });
-      sendResponse(state);
     })();
     return true;
   }

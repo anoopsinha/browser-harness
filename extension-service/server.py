@@ -31,7 +31,7 @@ import secrets
 import subprocess
 from pathlib import Path
 
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, Response
 
 HERE = Path(__file__).resolve().parent
 
@@ -154,6 +154,34 @@ def _extract_json(text):
     return None
 
 
+def build_gemini_cmd(body, output_format):
+    """Shared command build for /run (json) and /stream (stream-json)."""
+    prompt = (body.get("prompt") or "").strip()
+    session = (body.get("session") or "").strip()
+    tab_policy = body.get("tab_policy")
+    active_url = (body.get("active_url") or "").strip()
+
+    parts = []
+    if SYSTEM_PREAMBLE:
+        parts.append(SYSTEM_PREAMBLE)
+    if tab_policy == "single" and CONSOLE_TAB_POLICY:
+        parts.append(CONSOLE_TAB_POLICY)
+    elif tab_policy == "active" and ACTIVE_TAB_POLICY:
+        policy = ACTIVE_TAB_POLICY
+        if active_url:
+            policy += f"\nThe user's current tab URL is: {active_url}"
+        parts.append(policy)
+    parts.append(prompt)
+    full_prompt = "\n\n".join(parts)
+
+    cmd = [GEMINI_BIN, "-p", full_prompt, "-y", "--output-format", output_format]
+    if GEMINI_MODEL:
+        cmd += ["-m", GEMINI_MODEL]
+    if session:
+        cmd += ["-r", "latest"]  # Gemini resume: latest/index, not a UUID
+    return cmd
+
+
 def _num_turns(stats) -> int:
     try:
         return sum(
@@ -184,32 +212,10 @@ def run():
         return _cors(jsonify({"ok": False, "error": "unauthorized"}), origin), 401
 
     body = request.get_json(silent=True) or {}
-    prompt = (body.get("prompt") or "").strip()
-    if not prompt:
+    if not (body.get("prompt") or "").strip():
         return _cors(jsonify({"ok": False, "error": "missing prompt"}), origin), 400
-    session = (body.get("session") or "").strip()
 
-    tab_policy = body.get("tab_policy")
-    active_url = (body.get("active_url") or "").strip()
-
-    parts = []
-    if SYSTEM_PREAMBLE:
-        parts.append(SYSTEM_PREAMBLE)
-    if tab_policy == "single" and CONSOLE_TAB_POLICY:
-        parts.append(CONSOLE_TAB_POLICY)
-    elif tab_policy == "active" and ACTIVE_TAB_POLICY:
-        policy = ACTIVE_TAB_POLICY
-        if active_url:
-            policy += f"\nThe user's current tab URL is: {active_url}"
-        parts.append(policy)
-    parts.append(prompt)
-    full_prompt = "\n\n".join(parts)
-
-    cmd = [GEMINI_BIN, "-p", full_prompt, "-y", "--output-format", "json"]
-    if GEMINI_MODEL:
-        cmd += ["-m", GEMINI_MODEL]
-    if session:
-        cmd += ["-r", "latest"]  # Gemini resume: latest/index, not a UUID
+    cmd = build_gemini_cmd(body, "json")
 
     try:
         proc = subprocess.run(
@@ -242,6 +248,46 @@ def run():
         "cost_usd": None,  # Gemini CLI JSON reports tokens, not a dollar cost
     }
     return _cors(jsonify(out), origin), (200 if out["ok"] else 500)
+
+
+@app.route("/stream", methods=["OPTIONS"])
+def stream_preflight():
+    origin = request.headers.get("Origin", "")
+    return _cors(make_response("", 204), origin)
+
+
+@app.route("/stream", methods=["POST"])
+def stream():
+    origin = request.headers.get("Origin", "")
+    if not _origin_ok(origin):
+        return _cors(jsonify({"ok": False, "error": "bad origin"}), origin), 403
+    if not _auth_ok(request):
+        return _cors(jsonify({"ok": False, "error": "unauthorized"}), origin), 401
+    body = request.get_json(silent=True) or {}
+    if not (body.get("prompt") or "").strip():
+        return _cors(jsonify({"ok": False, "error": "missing prompt"}), origin), 400
+
+    cmd = build_gemini_cmd(body, "stream-json")
+
+    def generate():
+        # Stream gemini's newline-delimited JSON events straight through as
+        # NDJSON. stderr (banner/startup noise) is dropped so stdout is clean.
+        proc = subprocess.Popen(
+            cmd, cwd=AGENT_WS, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, bufsize=1,
+        )
+        try:
+            for line in proc.stdout:
+                if line.strip():
+                    yield line if line.endswith("\n") else line + "\n"
+        finally:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    resp = Response(generate(), mimetype="application/x-ndjson")
+    return _cors(resp, origin)
 
 
 if __name__ == "__main__":

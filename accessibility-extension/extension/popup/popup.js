@@ -936,6 +936,38 @@ function setupAssistantPanel() {
     return head;
   }
 
+  // One row of the live execution log (agent narration + harness commands).
+  function renderLog(log) {
+    const wrap = document.createElement('div');
+    wrap.className = 'assistant-log';
+    for (const e of log) {
+      const row = document.createElement('div');
+      if (e.kind === 'assistant') {
+        const text = (e.text || '').trim();
+        if (!text) continue;
+        row.className = 'log-assistant';
+        row.textContent = text;
+      } else if (e.kind === 'tool') {
+        row.className = 'log-tool';
+        const label = document.createElement('span');
+        label.className = 'log-tool-label';
+        label.textContent = '▶ ' + (e.name === 'run_shell_command' ? 'harness' : (e.name || 'tool'));
+        const cmd = document.createElement('pre');
+        cmd.className = 'log-tool-cmd';
+        cmd.textContent = e.command || '';
+        row.appendChild(label);
+        row.appendChild(cmd);
+      } else if (e.kind === 'tool_result') {
+        row.className = 'log-tool-result ' + (e.status === 'success' ? 'ok' : 'warn');
+        row.textContent = (e.status === 'success' ? '✓ ' : '• ') + (e.status || '');
+      } else {
+        continue;
+      }
+      wrap.appendChild(row);
+    }
+    return wrap;
+  }
+
   function render(state) {
     statusEl.textContent = '';
     const status = state?.status;
@@ -949,10 +981,6 @@ function setupAssistantPanel() {
     } else if (status === 'done') {
       statusEl.className = 'assistant-status-region assistant-state-done';
       statusEl.appendChild(mkHead('', 'check_circle', ' Done'));
-      const body = document.createElement('div');
-      body.className = 'assistant-result';
-      body.textContent = state.result || 'The Assistant finished.';
-      statusEl.appendChild(body);
     } else if (status === 'error') {
       statusEl.className = 'assistant-status-region assistant-state-error';
       statusEl.appendChild(mkHead('', null, 'Something went wrong'));
@@ -970,12 +998,27 @@ function setupAssistantPanel() {
       statusEl.className = 'assistant-status-region';
     }
 
+    // Live execution trace (what the browser-harness agent is doing).
+    if (Array.isArray(state.log) && state.log.length) {
+      statusEl.appendChild(renderLog(state.log));
+    }
+
+    // Final answer.
+    if (status === 'done') {
+      const body = document.createElement('div');
+      body.className = 'assistant-result';
+      body.textContent = state.result || 'The Assistant finished.';
+      statusEl.appendChild(body);
+    }
+
     if (state.task && status !== 'error') {
       const t = document.createElement('div');
       t.className = 'assistant-task';
       t.textContent = state.task;
       statusEl.appendChild(t);
     }
+    // Keep the newest log line in view while running.
+    statusEl.scrollTop = statusEl.scrollHeight;
   }
 
   // Initial state + live updates (result may arrive after the popup reopens).
