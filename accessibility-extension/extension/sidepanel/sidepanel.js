@@ -568,9 +568,13 @@
     } else if (status === 'done') {
       stopThinking();
       chimeDone();
-      const t = (state && state.result || '').trim();
-      if (t) speak(t); // interruptible; media resumes when the speech ends
-      else maybeResumeMedia();
+      if (state && state.stopped) {
+        speak('Okay, I stopped that.'); // announce the cancellation; media resumes on speech end
+      } else {
+        const t = (state && state.result || '').trim();
+        if (t) speak(t); // interruptible; media resumes when the speech ends
+        else maybeResumeMedia();
+      }
     } else if (status === 'error') {
       stopThinking();
       chimeError();

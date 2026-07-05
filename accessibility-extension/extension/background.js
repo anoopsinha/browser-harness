@@ -279,8 +279,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(state);
       } catch (e) {
         if (e && e.name === 'AbortError') {
-          // User pressed Stop / Esc: keep the partial result, mark it stopped.
+          // User pressed Stop: mark it stopped (the panel announces this via TTS).
           state.status = 'done';
+          state.stopped = true;
           if (!state.result) state.result = finalAnswer();
           state.log.push({ kind: 'assistant', text: '⏹ Stopped.' });
         } else {
