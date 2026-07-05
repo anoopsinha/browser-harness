@@ -1,2 +1,7 @@
-# GEMINI.md is regenerated from `browser-harness skill` on each start
-GEMINI.md
+# The agent runs here (cwd for gemini); ignore everything it generates
+# (GEMINI.md is regenerated on startup; screenshots/scratch come from tasks).
+# Keep only this file and the pinned auth settings.
+*
+!.gitignore
+!.gemini/
+!.gemini/settings.json
