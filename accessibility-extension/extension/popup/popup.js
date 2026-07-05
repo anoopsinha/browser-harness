@@ -957,7 +957,9 @@ function setupAssistantPanel() {
   function renderLog(log) {
     const wrap = document.createElement('div');
     wrap.className = 'assistant-log';
-    for (const e of log) {
+    // Newest entry first so the latest harness step is always at the top.
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
       const row = document.createElement('div');
       if (e.kind === 'assistant') {
         const text = (e.text || '').trim();
@@ -1034,8 +1036,8 @@ function setupAssistantPanel() {
       t.textContent = state.task;
       statusEl.appendChild(t);
     }
-    // Keep the newest log line in view while running.
-    statusEl.scrollTop = statusEl.scrollHeight;
+    // Newest log entry is at the top — keep it in view.
+    statusEl.scrollTop = 0;
   }
 
   // Initial state + live updates (result may arrive after the popup reopens).

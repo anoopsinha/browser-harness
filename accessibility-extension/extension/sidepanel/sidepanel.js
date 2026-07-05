@@ -37,7 +37,9 @@
   function renderLog(log) {
     const wrap = document.createElement('div');
     wrap.className = 'assistant-log';
-    for (const e of log) {
+    // Newest entry first so the latest harness step is always at the top.
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
       const row = document.createElement('div');
       if (e.kind === 'assistant') {
         const text = (e.text || '').trim();
@@ -127,7 +129,7 @@
       t.textContent = state.task;
       statusEl.appendChild(t);
     }
-    statusEl.scrollTop = statusEl.scrollHeight;
+    statusEl.scrollTop = 0; // newest log entry is at the top — keep it in view
   }
 
   // Run a task: same handoff as the popup. Shared by the button and by voice.
