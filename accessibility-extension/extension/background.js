@@ -68,8 +68,8 @@ async function getApiKey() {
   return data.geminiApiKey || data.geminiKey || null;
 }
 
-// The Librarian's slow lane (extraction, reflection, playbooks) uses the
-// same key-resolving caller.
+// The Librarian's site-classification fallback and the interpretNeeds prompt
+// use the same key-resolving caller.
 if (globalThis.Librarian) {
   globalThis.Librarian.setGeminiCaller(async (prompt) => {
     const key = await getApiKey();
@@ -80,8 +80,11 @@ if (globalThis.Librarian) {
 
 // Observe explicit setting toggles as memory signal. One listener instead
 // of instrumenting every popup control: any sync-area change to a known
-// tool setting is a deliberate user action (weight 3) — the popup and profile
-// "Apply" buttons all write through here.
+// tool setting is a deliberate user action — the popup and profile "Apply"
+// buttons all write through here. Recorded as a general-scope preference so
+// it gets final say in the effective-preferences merge and the change sticks
+// on the next page load. Origin is intentionally null: popup toggles are
+// global; per-site scoping is a later feature (and no `tabs` permission).
 const OBSERVED_SETTING_KEYS = new Set([
   'darkMode', 'readerMode', 'keyboardNav', 'voiceCommands', 'motionReducer', 'focusMode',
   'hideDistractions', 'showProgress', 'colorBlindMode', 'fontScale', 'lineHeight',
@@ -94,22 +97,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   const changed = Object.entries(changes).filter(([k]) => OBSERVED_SETTING_KEYS.has(k));
   if (!changed.length) return;
   (async () => {
-    let origin = null;
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.url) origin = new URL(tab.url).hostname;
-    } catch {}
-    for (const [key, { oldValue, newValue }] of changed) {
-      // Fast lane: make the change stick immediately (final say in the
-      // effective-preferences merge); the episodic observation below is the
-      // slow-lane signal for extraction/reflection.
-      await globalThis.Librarian.recordExplicitSetting(key, newValue, origin).catch(() => {});
-      await globalThis.Librarian.logObservation({
-        type: 'setting-change',
-        origin,
-        text: `User changed setting ${key} from ${JSON.stringify(oldValue)} to ${JSON.stringify(newValue)}`,
-        data: { key, oldValue, newValue },
-      }).catch(() => {});
+    for (const [key, { newValue }] of changed) {
+      await globalThis.Librarian.recordExplicitSetting(key, newValue, null).catch(() => {});
     }
   })();
 });
@@ -268,8 +257,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // --- Librarian (personal memory/profile agent) ---
-  // Fast lane: deterministic queries + mechanical writes. The *Now variants
-  // exist for debugging the (now setTimeout-debounced) slow lane.
+  // Fast lane: deterministic queries + mechanical writes.
   if (msg.type && msg.type.startsWith('librarian')) {
     const L = globalThis.Librarian;
     if (!L) { sendResponse({ error: 'librarian not loaded' }); return false; }
@@ -293,22 +281,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             sendResponse(await L.recall(msg.url, msg.task || '', msg.contexts || [])); break;
           case 'librarianListMemories':
             sendResponse(await L.listMemories(msg.filter || {})); break;
-          case 'librarianListProposals':
-            sendResponse({ proposals: await L.listProposals(msg.status ?? 'pending') }); break;
-          case 'librarianLogObservation':
-            sendResponse(await L.logObservation(msg.observation || {})); break;
-          case 'librarianRespondToProposal':
-            sendResponse(await L.respondToProposal(msg.id, msg.response)); break;
           case 'librarianDeleteMemory':
             sendResponse({ success: await L.deleteMemory(msg.id) }); break;
           case 'librarianSetPause':
             if (msg.origin) await L.setOriginPaused(msg.origin, msg.paused);
             else await L.setMemoryPaused(msg.paused);
             sendResponse({ success: true }); break;
-          case 'librarianExtractNow':
-            sendResponse(await L.extract()); break;
-          case 'librarianReflectNow':
-            sendResponse(await L.reflect()); break;
           default:
             sendResponse({ error: `unknown librarian message: ${msg.type}` });
         }

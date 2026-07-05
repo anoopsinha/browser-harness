@@ -109,20 +109,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Show setup nudge if onboarding hasn't been completed
-  const nudge = document.getElementById('setupNudge');
-  if (!settings.onboardingComplete && !settings.nudgeDismissed) {
-    nudge.hidden = false;
-    document.getElementById('nudgeSetupBtn').addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: 'openOnboarding' });
-      window.close();
-    });
-    document.getElementById('nudgeDismiss').addEventListener('click', async () => {
-      nudge.hidden = true;
-      await chrome.storage.sync.set({ nudgeDismissed: true });
-    });
-  }
-
   const fontScale = document.getElementById('fontScale');
   const fontScaleValue = document.getElementById('fontScaleValue');
   const lineHeight = document.getElementById('lineHeight');
@@ -542,16 +528,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     sendToContent({ type: 'rescan' });
   });
 
-  // Onboarding / Skill Builder
-  document.getElementById('onboardBtn').addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'openOnboarding' });
-    window.close();
-  });
-  document.getElementById('builderBtn').addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'openSkillBuilder' });
-    window.close();
-  });
-
   // Collapsible sections
   document.querySelectorAll('.section-header').forEach(header => {
     header.addEventListener('click', () => {
@@ -655,16 +631,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     scopeRow.textContent = 'Applies: ' + scopeChipLabel(result.scope);
     listEl.appendChild(scopeRow);
 
-    // Reflect "apply AND build" in the primary button when a skill is needed.
-    const applyBtn = document.getElementById('aiApplyBtn');
-    if (applyBtn) {
-      const hasSettings = result.settings && Object.keys(result.settings).length > 0;
-      const hasSkills = result.newSkills?.length > 0;
-      applyBtn.textContent = hasSkills
-        ? (hasSettings ? 'Apply & build adapter' : 'Build adapter')
-        : 'Apply suggestions';
-    }
-
     const settingLabels = {
       darkMode: 'Dark Mode', fontScale: 'Font Size', lineHeight: 'Line Height',
       letterSpacing: 'Letter Spacing', dyslexiaFont: 'Dyslexia Font', largeCursor: 'Large Cursor',
@@ -688,22 +654,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
-    if (result.newSkills?.length > 0) {
-      const divider = document.createElement('div');
-      divider.className = 'ai-suggestion-divider';
-      divider.textContent = 'These needs require a custom adapter:';
-      listEl.appendChild(divider);
-
-      for (const skill of result.newSkills) {
-        const item = document.createElement('div');
-        item.className = 'ai-suggestion-item ai-new-skill';
-        item.innerHTML = `<span class="setting-name">${escapeHtml(skill.name)}</span><span class="setting-reason">${escapeHtml(skill.description)}</span>`;
-        listEl.appendChild(item);
-      }
-      // The primary "Apply & build adapter" button drives the build; no separate
-      // inline button (it was an either/or that lost the scoped settings).
-    }
-
     aiSuggestion.hidden = false;
   }
 
@@ -724,27 +674,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Open the skill builder for the suggestion's custom skills, carrying the
-  // scope so the built skill is gated to the same sites as the settings.
-  function openBuilderForSuggestion(suggestion) {
-    const skills = suggestion?.newSkills || [];
-    chrome.runtime.sendMessage({
-      type: 'openSkillBuilder', pendingSkills: skills, scope: suggestion?.scope || 'general',
-    });
-    window.close();
-  }
-
   document.getElementById('aiApplyBtn').addEventListener('click', async () => {
     const sug = pendingAISuggestion;
     if (!sug) return;
     await applySuggestionSettings(sug);
     aiInput.value = '';
-    // Apply AND build: when the request also needs a custom skill, proceed
-    // into the builder instead of forcing an either/or choice.
-    if (sug.newSkills?.length > 0) {
-      openBuilderForSuggestion(sug);
-      return;
-    }
     aiSuggestion.hidden = true;
   });
 
@@ -925,69 +859,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       row.appendChild(applyBtn);
       row.appendChild(delBtn);
       list.appendChild(row);
-
-      const actions = p.actions || [];
-      if (actions.length > 0) {
-        const actionList = document.createElement('div');
-        actionList.className = 'profile-action-list';
-        for (const action of actions) {
-          const item = document.createElement('div');
-          item.className = 'profile-action-item';
-
-          const icon = document.createElement('span');
-          icon.textContent = '\u25B6';
-          icon.style.cssText = 'font-size:8px;color:var(--blue);flex-shrink:0';
-
-          const name = document.createElement('span');
-          name.className = 'action-name';
-          name.textContent = action.name || action.prompt;
-          name.title = action.prompt;
-
-          const delActionBtn = document.createElement('button');
-          delActionBtn.className = 'action-delete';
-          delActionBtn.textContent = '\u2715';
-          delActionBtn.title = 'Remove action';
-          delActionBtn.setAttribute('aria-label', 'Remove action: ' + (action.name || action.prompt));
-          delActionBtn.addEventListener('click', async () => {
-            try {
-              await chrome.runtime.sendMessage({
-                type: 'removeActionFromProfile',
-                profileId: p.id,
-                actionId: action.id,
-              });
-              await loadAndRenderProfiles();
-            } catch (e) {
-              console.warn('Remove action failed:', e);
-            }
-          });
-
-          item.appendChild(icon);
-          item.appendChild(name);
-          item.appendChild(delActionBtn);
-          actionList.appendChild(item);
-        }
-        list.appendChild(actionList);
-      }
     }
   }
 
   loadAndRenderProfiles();
 
-  // Load custom skills (with on/off toggles and delete buttons).
-  renderCustomSkillsList();
-
   // Query states from content
   queryToolStates();
   queryStats();
-
-  // ============================================================
-  // Browser Agent panel
-  // ============================================================
-  // Lives in chrome.storage.local.bhAgent and is updated by the service-
-  // worker agent loop in extension/browser-harness/agent.js. The popup is
-  // pure UI: render-from-storage on open, subscribe to onChanged for live
-  // updates, send messages to start/stop/clear.
-  setupAgentPanel();
 
   // What the Librarian knows: pending proposals (consent gate), learned
   // memories grouped by where they apply, and standing "don't suggest"
@@ -1145,196 +1024,6 @@ function setupMemoryPanel() {
   render();
 }
 
-function setupAgentPanel() {
-  const taskInput = document.getElementById('agentTaskInput');
-  const runBtn = document.getElementById('agentRunBtn');
-  const stopBtn = document.getElementById('agentStopBtn');
-  const clearBtn = document.getElementById('agentClearBtn');
-  const voiceBtn = document.getElementById('voicePanelBtn');
-  const statusEl = document.getElementById('agentStatus');
-  const logEl = document.getElementById('agentLog');
-  if (!taskInput || !runBtn) return;
-
-  // Voice panel: opens chrome's side panel and closes the popup. The
-  // panel hosts the Gemini Live conversation; agent control still goes
-  // through this popup. sidePanel.open requires a user gesture.
-  if (voiceBtn) {
-    voiceBtn.addEventListener('click', async () => {
-      try {
-        const win = await chrome.windows.getCurrent();
-        if (chrome.sidePanel && chrome.sidePanel.open) {
-          await chrome.sidePanel.open({ windowId: win.id });
-        }
-        window.close();
-      } catch (e) {
-        console.warn('Open voice panel failed:', e);
-      }
-    });
-  }
-
-  const saveToProfileBtn = document.getElementById('agentSaveToProfileBtn');
-  const saveForm = document.getElementById('agentSaveForm');
-  const actionNameInput = document.getElementById('agentActionName');
-  const profileSelect = document.getElementById('agentProfileSelect');
-  const saveCancelBtn = document.getElementById('agentSaveCancelBtn');
-  const saveConfirmBtn = document.getElementById('agentSaveConfirmBtn');
-
-  let lastDoneTask = null;
-
-  function renderAgent(state) {
-    const s = state || { status: 'idle', log: [] };
-    statusEl.textContent = s.status || 'idle';
-    statusEl.dataset.status = s.status || 'idle';
-
-    const running = s.status === 'running';
-    runBtn.hidden = running;
-    stopBtn.hidden = !running;
-    runBtn.disabled = running;
-    taskInput.disabled = running;
-
-    if (s.task && !taskInput.value) taskInput.value = s.task;
-
-    if (s.status === 'done' && s.task) {
-      lastDoneTask = s.task;
-      saveToProfileBtn.hidden = false;
-    } else if (s.status === 'running' || s.status === 'idle') {
-      saveToProfileBtn.hidden = true;
-      saveForm.hidden = true;
-    }
-
-    const log = s.log || [];
-    if (!log.length) {
-      logEl.innerHTML = '<div class="agent-log-empty">No runs yet. Type a task and press Run.</div>';
-      return;
-    }
-    const wasAtBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 8;
-    logEl.innerHTML = '';
-    for (const entry of log) {
-      const row = document.createElement('div');
-      row.className = 'agent-entry';
-      row.dataset.kind = entry.kind || 'info';
-      const tag = document.createElement('span');
-      tag.className = 'agent-entry-tag';
-      tag.textContent = entry.step != null ? `#${entry.step}` : (entry.kind || 'info');
-      const text = document.createElement('span');
-      text.className = 'agent-entry-text';
-      text.textContent = entry.text || '';
-      if (entry.action) {
-        const small = document.createElement('small');
-        small.textContent = entry.action;
-        text.appendChild(small);
-      }
-      row.appendChild(tag);
-      row.appendChild(text);
-      logEl.appendChild(row);
-    }
-    if (wasAtBottom) logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  saveToProfileBtn.addEventListener('click', async () => {
-    actionNameInput.value = lastDoneTask || '';
-    profileSelect.innerHTML = '';
-    try {
-      const resp = await chrome.runtime.sendMessage({ type: 'getCustomProfiles' });
-      const profiles = resp?.profiles || [];
-      for (const p of profiles) {
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        opt.textContent = p.name + (p.siteTypes?.length ? ' (' + p.siteTypes.join(', ') + ')' : '');
-        profileSelect.appendChild(opt);
-      }
-      if (!profiles.length) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = 'No profiles — create one first';
-        opt.disabled = true;
-        profileSelect.appendChild(opt);
-      }
-    } catch (e) {
-      console.warn('Failed to load profiles:', e);
-    }
-    saveForm.hidden = false;
-    actionNameInput.focus();
-  });
-
-  saveCancelBtn.addEventListener('click', () => {
-    saveForm.hidden = true;
-  });
-
-  saveConfirmBtn.addEventListener('click', async () => {
-    const profileId = profileSelect.value;
-    const name = actionNameInput.value.trim();
-    if (!profileId || !name) { actionNameInput.focus(); return; }
-
-    saveConfirmBtn.disabled = true;
-    saveConfirmBtn.textContent = 'Saving...';
-    try {
-      const action = {
-        id: 'action-' + Date.now(),
-        name,
-        prompt: lastDoneTask,
-        savedAt: Date.now(),
-      };
-      await chrome.runtime.sendMessage({ type: 'saveActionToProfile', profileId, action });
-      saveForm.hidden = true;
-      saveToProfileBtn.hidden = true;
-      if (typeof loadAndRenderProfiles === 'function') loadAndRenderProfiles();
-    } catch (e) {
-      console.warn('Save action failed:', e);
-    } finally {
-      saveConfirmBtn.disabled = false;
-      saveConfirmBtn.textContent = 'Save Action';
-    }
-  });
-
-  // Initial render from persisted state.
-  chrome.storage.local.get('bhAgent', (data) => renderAgent(data.bhAgent));
-
-  // Live updates while the popup is open.
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.bhAgent) return;
-    renderAgent(changes.bhAgent.newValue);
-  });
-
-  function startRun() {
-    const task = taskInput.value.trim();
-    if (!task) {
-      taskInput.focus();
-      return;
-    }
-    const tabMode = document.getElementById('agentTabMode')?.value || 'auto';
-    chrome.runtime.sendMessage({ type: 'bhAgentStart', task, tabMode }, (resp) => {
-      if (chrome.runtime.lastError || (resp && resp.error)) {
-        const err = (resp && resp.error) || chrome.runtime.lastError?.message || 'failed to start';
-        // Surface the failure in the log even though the loop never wrote to storage.
-        chrome.storage.local.get('bhAgent', (cur) => {
-          const state = cur.bhAgent || { task, status: 'idle', log: [] };
-          state.status = 'error';
-          state.error = err;
-          state.log = (state.log || []).concat({ t: Date.now(), kind: 'error', text: err });
-          chrome.storage.local.set({ bhAgent: state });
-        });
-      }
-    });
-  }
-
-  runBtn.addEventListener('click', startRun);
-  taskInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      startRun();
-    }
-  });
-  stopBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'bhAgentStop' }, () => {});
-  });
-  clearBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'bhAgentClear' }, () => {
-      renderAgent(null);
-    });
-  });
-}
-
 async function sendToContent(message) {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -1420,121 +1109,6 @@ function updateFixesPanel(stats, fixes) {
     });
   }
 }
-
-// ----- Custom skills panel ------------------------------------------------
-// Renders the Custom Skills section with a per-skill enable toggle and an
-// inline two-click delete button. Custom skills are user-authored JS blobs
-// registered by the background as user scripts; toggling here saves the
-// skill back with `enabled: false/true` and the background's storage
-// listener (un)registers the user script accordingly.
-function renderCustomSkillsList() {
-  chrome.runtime.sendMessage({ type: 'getActiveSkills' }, (resp) => {
-    const customSkills = (resp && resp.customSkills) || [];
-    const customSection = document.getElementById('customSection');
-    const customList = document.getElementById('customList');
-    const customCountEl = document.getElementById('customCount');
-    if (!customSection || !customList) return;
-
-    if (customSkills.length === 0) {
-      customSection.hidden = true;
-      return;
-    }
-
-    customSection.hidden = false;
-    if (customCountEl) customCountEl.textContent = String(customSkills.length);
-    customList.innerHTML = '';
-    for (const skill of customSkills) {
-      customList.appendChild(createCustomSkillRow(skill));
-    }
-  });
-}
-
-function createCustomSkillRow(skill) {
-  const row = document.createElement('div');
-  row.className = 'tool';
-
-  const icon = document.createElement('span');
-  icon.className = 'tool-icon';
-  icon.style.fontSize = '14px';
-  icon.textContent = '✨';
-
-  const name = document.createElement('span');
-  name.className = 'tool-name';
-  name.textContent = skill.name || skill.id;
-
-  row.appendChild(icon);
-  row.appendChild(name);
-  row.appendChild(createCustomToggle(skill));
-  row.appendChild(createCustomDeleteButton(skill));
-  return row;
-}
-
-function createCustomToggle(skill) {
-  const enabled = skill.enabled !== false;
-  const wrapper = document.createElement('label');
-  wrapper.className = 'switch small';
-  wrapper.title = enabled ? 'Disable adapter' : 'Enable adapter';
-
-  const input = document.createElement('input');
-  input.type = 'checkbox';
-  input.checked = enabled;
-  input.setAttribute('aria-label',
-    `${enabled ? 'Disable' : 'Enable'} adapter: ${skill.name || skill.id}`);
-
-  const track = document.createElement('span');
-  track.className = 'switch-track';
-
-  wrapper.appendChild(input);
-  wrapper.appendChild(track);
-
-  input.addEventListener('change', () => {
-    const updated = {
-      ...skill,
-      enabled: input.checked,
-      updatedAt: new Date().toISOString(),
-    };
-    chrome.runtime.sendMessage({ type: 'saveCustomSkill', skill: updated }, () => {
-      wrapper.title = input.checked ? 'Disable adapter' : 'Enable adapter';
-      input.setAttribute('aria-label',
-        `${input.checked ? 'Disable' : 'Enable'} adapter: ${skill.name || skill.id}`);
-    });
-  });
-  return wrapper;
-}
-
-function createCustomDeleteButton(skill) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'skill-delete';
-  btn.textContent = '✕';
-  btn.title = 'Delete adapter';
-  btn.setAttribute('aria-label', `Delete adapter: ${skill.name || skill.id}`);
-
-  let confirmTimer = null;
-  btn.addEventListener('click', () => {
-    if (btn.dataset.confirming === '1') {
-      clearTimeout(confirmTimer);
-      btn.disabled = true;
-      btn.textContent = '…';
-      chrome.runtime.sendMessage(
-        { type: 'deleteCustomSkill', skillId: skill.id },
-        () => renderCustomSkillsList()
-      );
-      return;
-    }
-    btn.dataset.confirming = '1';
-    btn.textContent = 'Confirm?';
-    btn.setAttribute('aria-label', `Confirm delete: ${skill.name || skill.id}`);
-    if (confirmTimer) clearTimeout(confirmTimer);
-    confirmTimer = setTimeout(() => {
-      btn.dataset.confirming = '';
-      btn.textContent = '✕';
-      btn.setAttribute('aria-label', `Delete adapter: ${skill.name || skill.id}`);
-    }, 4000);
-  });
-  return btn;
-}
-
 function escapeHtml(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

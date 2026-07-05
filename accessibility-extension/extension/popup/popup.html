@@ -28,13 +28,6 @@
     <div id="proposalBanner" class="proposal-banner" hidden aria-live="polite"
          role="region" aria-label="Suggestions awaiting your response"></div>
 
-    <!-- Setup nudge (shown if onboarding not completed) -->
-    <div class="setup-nudge" id="setupNudge" hidden role="status">
-      <span>New here? Run the setup wizard to get personalized recommendations.</span>
-      <button class="btn btn-primary btn-sm" id="nudgeSetupBtn">Get Started</button>
-      <button class="nudge-dismiss" id="nudgeDismiss" aria-label="Dismiss">&times;</button>
-    </div>
-
     <!-- AI Support Input -->
     <div class="ai-input-row" id="aiInputRow">
       <label for="aiSupportInput" class="sr-only">Describe what support you need</label>
@@ -56,59 +49,6 @@
     <div class="ai-loading" id="aiLoading" hidden role="status" aria-live="polite">
       <span class="material-symbols-outlined spin" aria-hidden="true">sync</span> Thinking&hellip;
     </div>
-
-    <!-- Browser Agent (CDP-driven harness) -->
-    <section class="section" id="agentSection">
-      <div class="section-header" role="button" tabindex="0" aria-expanded="true">
-        <span class="section-title">Browser Agent</span>
-        <span class="agent-status" id="agentStatus">idle</span>
-        <span class="section-arrow">&#9660;</span>
-      </div>
-      <div class="section-body">
-        <div class="agent-input-row">
-          <label for="agentTaskInput" class="sr-only">Browser task</label>
-          <input type="text" id="agentTaskInput" placeholder="What should the agent do? e.g. &quot;find the top trending Python repo on GitHub&quot;" aria-label="Browser task">
-          <label for="agentTabMode" class="sr-only">Run on</label>
-          <select id="agentTabMode" class="agent-tab-mode" title="Where the agent runs" aria-label="Run on">
-            <option value="auto">Auto</option>
-            <option value="current">Current tab</option>
-            <option value="new">New tab</option>
-          </select>
-          <button class="btn btn-primary btn-sm" id="agentRunBtn" title="Run agent" aria-label="Run agent">
-            <span class="material-symbols-outlined" style="font-size:16px">play_arrow</span>
-          </button>
-          <button class="btn btn-secondary btn-sm" id="agentStopBtn" title="Stop agent" aria-label="Stop agent" hidden>
-            <span class="material-symbols-outlined" style="font-size:16px">stop</span>
-          </button>
-          <button class="btn btn-secondary btn-sm" id="voicePanelBtn" title="Open voice panel" aria-label="Open voice panel">
-            <span class="material-symbols-outlined" style="font-size:16px">mic</span>
-          </button>
-        </div>
-        <div class="agent-log" id="agentLog" role="log" aria-live="polite" aria-label="Agent progress">
-          <div class="agent-log-empty">No runs yet. Type a task and press Run.</div>
-        </div>
-        <div class="agent-actions">
-          <button class="btn btn-secondary btn-sm" id="agentClearBtn">Clear log</button>
-          <button class="btn btn-primary btn-sm" id="agentSaveToProfileBtn" hidden>
-            <span class="material-symbols-outlined" style="font-size:14px">verified</span> Save to Profile
-          </button>
-        </div>
-        <div class="agent-save-form" id="agentSaveForm" hidden>
-          <div class="input-group" style="margin-bottom:6px">
-            <label for="agentActionName">Action name</label>
-            <input type="text" id="agentActionName" placeholder="e.g. Dismiss cookie banners">
-          </div>
-          <div class="input-group" style="margin-bottom:6px">
-            <label for="agentProfileSelect">Save to profile</label>
-            <select id="agentProfileSelect"></select>
-          </div>
-          <div style="display:flex;gap:6px;justify-content:flex-end">
-            <button class="btn btn-secondary btn-sm" id="agentSaveCancelBtn">Cancel</button>
-            <button class="btn btn-primary btn-sm" id="agentSaveConfirmBtn">Save Action</button>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <!-- My Profiles -->
     <section class="section" id="myProfilesSection" hidden>
@@ -364,16 +304,6 @@
       </div>
     </section>
 
-    <!-- Custom Adapters (dynamic) -->
-    <section class="section" id="customSection" hidden>
-      <div class="section-header" role="button" tabindex="0" aria-expanded="true">
-        <span class="section-title">Custom Adapters</span>
-        <span class="section-count" id="customCount">0</span>
-        <span class="section-arrow">&#9660;</span>
-      </div>
-      <div class="section-body" id="customList"></div>
-    </section>
-
     <!-- Fixes panel -->
     <div class="fixes-panel" id="fixesPanel" style="display:none">
       <div class="fixes-header" id="fixesHeader" role="button" tabindex="0" aria-expanded="false">
@@ -390,8 +320,6 @@
   <footer>
     <button class="btn btn-secondary" id="saveProfileBtn" title="Save current settings as a profile"><span class="material-symbols-outlined" style="font-size:14px">verified</span> Save Profile</button>
     <div class="spacer"></div>
-    <button class="btn btn-secondary" id="onboardBtn" title="Re-run setup wizard"><span class="material-symbols-outlined" style="font-size:14px">play_arrow</span> Setup</button>
-    <button class="btn btn-secondary" id="builderBtn" title="Open Adapter Creator"><span class="material-symbols-outlined" style="font-size:14px">build</span> Adapters</button>
     <button class="btn btn-secondary" id="scanPage" title="Re-apply adapters"><span class="material-symbols-outlined" style="font-size:14px">refresh</span> Rescan</button>
     <button class="btn btn-secondary" id="resetAll" title="Reset all settings"><span class="material-symbols-outlined" style="font-size:14px">restart_alt</span> Reset</button>
   </footer>
