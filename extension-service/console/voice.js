@@ -1,11 +1,11 @@
 // voice.js — optional voice input/output + "thinking" earcons for the console.
 //
-// Everything here is OFF until voice mode is enabled (button or Ctrl+M), so the
+// Everything here is OFF until voice mode is enabled (button or Alt+M), so the
 // typed console behaves exactly as before. Uses only native browser APIs:
 //   - SpeechRecognition (STT), SpeechSynthesis (TTS), Web Audio (earcons).
 //
 // Hotkeys:
-//   Ctrl+M  toggle listening (start → stop+submit); first use turns voice on;
+//   Alt+M   toggle listening (start → stop+submit); first use turns voice on;
 //           pressing it also interrupts any speech that's playing.
 //   Esc     stop listening without submitting, and interrupt speech.
 (function () {
@@ -17,8 +17,12 @@
   let listening = false;
   let finalTranscript = "";
 
+  // Alt+M (Option+M), NOT Ctrl+M: the accessibility extension registers a
+  // browser-level chrome.commands Ctrl+M shortcut, and Chrome swallows that
+  // before a web page's keydown handler ever runs. On macOS Option+M yields
+  // key "µ", so match on e.code.
   const isTalkKey = (e) =>
-    e.ctrlKey && !e.metaKey && !e.altKey && (e.code === "KeyM" || e.key === "m");
+    e.altKey && !e.metaKey && !e.ctrlKey && (e.code === "KeyM" || e.key === "m" || e.key === "µ");
 
   // ---------- Web Audio earcons ----------
   let ac = null;
@@ -260,7 +264,7 @@
     try { rec.start(); } catch (_) {}
     listening = true;
     mediaPause(); // pause page audio/video so it doesn't overlap the user's voice
-    setBadge("listening — Ctrl+M to send, Esc to cancel");
+    setBadge("listening — Alt+M to send, Esc to cancel");
     blipListenOn();
     render();
   }

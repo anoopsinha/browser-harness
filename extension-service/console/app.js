@@ -184,7 +184,7 @@ document.addEventListener("click", (e) => {
 window.Console = { submit: handle, log: (m) => el("sys", m) };
 
 // boot
-el("sys", "gemini-extension-service console — type :help. Enter to send. Voice: Ctrl+M to talk.");
+el("sys", "gemini-extension-service console — type :help. Enter to send. Voice: Alt+M to talk.");
 checkHealth();
 setInterval(checkHealth, 15000);
 setSession(null);
