@@ -6,6 +6,9 @@
     "build": "node build.js",
     "watch": "node build.js --watch"
   },
+  "dependencies": {
+    "ai-for-accessibility-toolkit": "file:../../AI-for-Accessibility-Toolkit-Draft"
+  },
   "devDependencies": {
     "chokidar": "^3.6.0",
     "esbuild": "^0.28.0",

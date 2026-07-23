@@ -472,6 +472,94 @@ Return ONLY valid JSON with:
 }`;
     },
 
+    // ================== SKILLS (the Engineer + Skills db) ==================
+    // Adaptive-agent layer from the toolkit: SKILL.md playbooks that compose
+    // adapters. Parse/validate/resolve/match + the Engineer's buildSkill come
+    // from AA_SKILL_CORE (bundled out of the ai-for-accessibility-toolkit
+    // package by build.js); this section is the Librarian's storage + consent
+    // side. Nothing is saved without the user validating first.
+
+    // All skills available to this person: built-in (global tier, from
+    // skill-docs.js) + their own (mine.skillDocs).
+    async listSkills() {
+      const builtin = (DS().global.skills() || []).map(s => ({ ...s, source: 'builtin' }));
+      const mine = (await DS().get('mine.skillDocs') || []).map(s => ({ ...s, source: 'mine' }));
+      return [...builtin, ...mine];
+    },
+
+    // Best-fitting skill for a page + this person. Deterministic scoring over
+    // the profile's support areas and the page category — no LLM.
+    async retrieveSkill(url, contexts = []) {
+      const profile = await getOrInitProfile();
+      const origin = originOf(url);
+      const category = origin ? await this.getSiteCategory(origin) : null;
+      const ctx = { supportAreas: profile.supportAreas || [], category };
+      const scored = (await this.listSkills())
+        .map(s => ({ skill: s, score: globalThis.AA_SKILL_CORE.matchSkill(s, ctx) }))
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score);
+      return scored.length ? scored[0].skill : null;
+    },
+
+    // "Does the skill exist in the db?" — checked BEFORE the Engineer builds
+    // anything. Deterministic keyword match, so the reuse offer works without
+    // an API key. Returns the best fit or null.
+    async findSkillForNeed(need) {
+      const scored = (await this.listSkills())
+        .map(s => ({ skill: s, score: globalThis.AA_SKILL_CORE.matchSkillToNeed(s, need) }))
+        .filter(x => x.score >= 4)
+        .sort((a, b) => b.score - a.score);
+      return scored.length ? scored[0].skill : null;
+    },
+
+    // Compile a skill to the deterministic apply-plan (settings + adapter ids
+    // + agent actions). No LLM at apply-time.
+    resolveSkill(skill) {
+      return globalThis.AA_SKILL_CORE.resolveSkill(skill);
+    },
+
+    // The Engineer: build a new skill from a plain-language need, grounded in
+    // the real adapter catalog. Does NOT save — the user validates first (the
+    // adaptive evaluation interface). On rejection, pass the attempt back as
+    // { previous, feedback } and the Engineer revises it.
+    async buildSkill(need, opts = {}) {
+      const profile = await getOrInitProfile();
+      return await globalThis.AA_SKILL_CORE.buildSkill(need, {
+        llm: _gemini,
+        tools: DS().global.tools(),
+        taxonomy: TAX(),
+        profile,
+        previous: opts.previous || null,
+        feedback: opts.feedback || '',
+      });
+    },
+
+    // Persist a user-validated skill to their Skills db (mine.skillDocs).
+    // Re-validates against the registry so a malformed skill can't be stored.
+    // (The full toolkit also logs the save as a profile observation; the
+    // Librarian-lite has no extraction pipeline to fold it, so we don't.)
+    async saveSkill(skill) {
+      const { valid, errors } = globalThis.AA_SKILL_CORE.validateSkill(skill, { tools: DS().global.tools() });
+      if (!valid) return { saved: false, errors };
+      await DS().patch('mine.skillDocs', (skills) => {
+        const idx = skills.findIndex(s => s.name === skill.name);
+        const entry = { ...skill, savedAt: Date.now() };
+        if (idx >= 0) skills[idx] = entry; else skills.push(entry);
+        return skills;
+      });
+      return { saved: true, errors: [] };
+    },
+
+    async deleteSkill(name) {
+      let removed = false;
+      await DS().patch('mine.skillDocs', (skills) => {
+        const next = skills.filter(s => s.name !== name);
+        removed = next.length !== skills.length;
+        return next;
+      });
+      return removed;
+    },
+
     async setMemoryPaused(paused) {
       await DS().patch('mine.profile', (p) => {
         p = p || structuredClone(PROFILE_DEFAULTS);

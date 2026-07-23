@@ -4,6 +4,8 @@
 self.importScripts(
   'lib/taxonomy.js',
   'lib/tools-registry.js',
+  'lib/skill-core.js',   // AA_SKILL_CORE — toolkit skill/skill-builder bundle
+  'lib/skill-docs.js',   // AA_SKILL_DOCS_RAW — built-in SKILL.md playbooks
   'lib/datastore.js',
   'lib/librarian.js'
 );
@@ -447,6 +449,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (msg.origin) await L.setOriginPaused(msg.origin, msg.paused);
             else await L.setMemoryPaused(msg.paused);
             sendResponse({ success: true }); break;
+          // -- Skills (the Engineer + Skills db) --
+          case 'librarianListSkills':
+            sendResponse({ skills: await L.listSkills() }); break;
+          case 'librarianFindSkillForNeed':
+            sendResponse({ skill: await L.findSkillForNeed(msg.need || '') }); break;
+          case 'librarianRetrieveSkill':
+            sendResponse({ skill: await L.retrieveSkill(msg.url, msg.contexts || []) }); break;
+          case 'librarianResolveSkill':
+            sendResponse({ plan: L.resolveSkill(msg.skill) }); break;
+          case 'librarianBuildSkill':
+            sendResponse(await L.buildSkill(msg.need || '', msg.opts || {})); break;
+          case 'librarianSaveSkill':
+            sendResponse(await L.saveSkill(msg.skill)); break;
+          case 'librarianDeleteSkill':
+            sendResponse({ removed: await L.deleteSkill(msg.name) }); break;
           default:
             sendResponse({ error: `unknown librarian message: ${msg.type}` });
         }

@@ -143,7 +143,13 @@ async function applyAISettings(newSettings) {
   if (newSettings.autoCaptions !== undefined) {
     if (newSettings.autoCaptions) {
       try { await GenerateCaptions.enable(); } catch (e) { console.warn('[AI4A11y] GenerateCaptions error:', e); }
-    } else if (GenerateCaptions.disable) GenerateCaptions.disable();
+      // AutoCaptions turns on the platform's own captions (YouTube embeds +
+      // youtube.com native CC) — the path that works without transcription AI.
+      try { AutoCaptions.enable(); } catch (e) { console.warn('[AI4A11y] AutoCaptions error:', e); }
+    } else {
+      if (GenerateCaptions.disable) GenerateCaptions.disable();
+      if (AutoCaptions.disable) AutoCaptions.disable();
+    }
   }
 
   if (newSettings.autoSimplify !== undefined) {
@@ -187,7 +193,9 @@ async function initFromStorage() {
     if (settings.motionReducer) enableTool('MotionReducer');
     if (settings.readerMode) enableTool('ReaderMode');
     if (settings.keyboardNav) enableTool('KeyboardNavigator');
-    if (settings.voiceCommands) enableTool('VoiceCommands');
+    // voiceCommands deliberately NOT honored here: voice mode is the harness
+    // Voice Assistant side panel (opened from the popup), never an in-page
+    // speech-recognition session started on load.
 
     if (settings.focusMode) {
       enableTool('FocusMode', {
@@ -230,7 +238,10 @@ async function initFromStorage() {
     if (aiSettings.autoWcagFix) { try { await WcagFixes.enable(); } catch (e) {} }
     if (aiSettings.autoFixLabels) { try { await GenerateLabels.enable(); } catch (e) {} }
     if (aiSettings.autoDescribe) { try { await AutoAltText.enable(); } catch (e) {} }
-    if (aiSettings.autoCaptions) { try { await GenerateCaptions.enable(); } catch (e) {} }
+    if (aiSettings.autoCaptions) {
+      try { await GenerateCaptions.enable(); } catch (e) {}
+      try { AutoCaptions.enable(); } catch (e) {}
+    }
     if (aiSettings.autoSimplify || aiSettings.autoSummarize) { try { await SimplifyText.enable(); } catch (e) {} }
 
     console.log('[AI4A11y] Initialized from stored settings');
@@ -288,9 +299,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 function applyProfileSettings(settings) {
+  // voiceCommands intentionally absent: voice mode is the harness Voice
+  // Assistant side panel, not the in-page speech-recognition adapter.
   const toolMapping = {
     darkMode: 'DarkMode', readerMode: 'ReaderMode',
-    keyboardNav: 'KeyboardNavigator', voiceCommands: 'VoiceCommands',
+    keyboardNav: 'KeyboardNavigator',
     motionReducer: 'MotionReducer'
   };
 
@@ -336,6 +349,9 @@ function applyProfileSettings(settings) {
   for (const [key, mod] of Object.entries(aiKeys)) {
     if (settings[key] === true) { try { mod.enable(); } catch (e) {} }
   }
+  // Platform-native captions (YouTube) ride along with autoCaptions.
+  if (settings.autoCaptions === true) { try { AutoCaptions.enable(); } catch (e) {} }
+  else if (settings.autoCaptions === false) { try { AutoCaptions.disable(); } catch (e) {} }
 
   console.log('[AI4A11y] Profile settings applied');
 }

@@ -55,6 +55,10 @@
     // Materialized presentation views (core memory block, review-page
     // groups, category playbooks) rendered by the reflection job.
     'mine.views':        { area: 'local', key: 'aa.mine.views',        version: 1, def: {},   reserved: true },
+    // The user's own SKILL.md playbooks (parsed Skill objects), written by
+    // the Librarian's saveSkill after the user validates the Engineer's
+    // build. Distinct from legacy 'mine.skills' (user-built adapter CODE).
+    'mine.skillDocs':    { area: 'local', key: 'aa.mine.skillDocs',    version: 1, def: [] },
   };
 
   // Memory fact shards are dynamic (one key per scope) and share this
@@ -175,6 +179,17 @@
     global: {
       tools() { return globalThis.AA_TOOLS || null; },
       taxonomy() { return globalThis.AA_TAXONOMY || null; },
+      // Built-in SKILL.md playbooks (skill-docs.js), parsed once on first
+      // read via the toolkit's parser (skill-core.js). Empty when either
+      // script isn't loaded in this context.
+      skills() {
+        if (this._skills) return this._skills;
+        const raw = globalThis.AA_SKILL_DOCS_RAW;
+        const core = globalThis.AA_SKILL_CORE;
+        if (!raw || !core) return [];
+        this._skills = Object.values(raw).map((md) => core.parseSkill(md));
+        return this._skills;
+      },
     },
 
     runMigrations,

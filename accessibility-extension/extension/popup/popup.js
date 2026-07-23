@@ -106,7 +106,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     } else {
       await chrome.storage.sync.set({ [key]: value });
+      recordNonProfileSettings({ [key]: value });
     }
+  }
+
+  // ---- Layered setting sources --------------------------------------------
+  // Settings arrive from three places: the base-profile checkboxes, typed AI
+  // suggestions, and manual toggles/sliders (incl. saved custom profiles).
+  // `nonProfileSettings` (storage.sync) remembers the last value set by any
+  // NON-checkbox source, so unchecking a base profile restores that value
+  // instead of blowing the setting away.
+  function recordNonProfileSettings(partial) {
+    if (!partial || !Object.keys(partial).length) return;
+    chrome.storage.sync.get(['nonProfileSettings']).then(({ nonProfileSettings }) => {
+      chrome.storage.sync.set({ nonProfileSettings: { ...(nonProfileSettings || {}), ...partial } });
+    });
   }
 
   const fontScale = document.getElementById('fontScale');
@@ -138,6 +152,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       el.checked = defaultVal ? settings[id] !== false : settings[id] === true;
       el.addEventListener('change', async (e) => {
         await chrome.storage.sync.set({ [id]: e.target.checked });
+        recordNonProfileSettings({ [id]: e.target.checked });
         sendToContent({ type: 'settingsChanged', settings: { [id]: e.target.checked } });
       });
     }
@@ -148,9 +163,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     darkMode: 'DarkMode',
     readerMode: 'ReaderMode',
     keyboardNav: 'KeyboardNavigator',
-    voiceCommands: 'VoiceCommands',
     motionReducer: 'MotionReducer'
   };
+
+  // Voice Commands → the harness Voice Assistant side panel (voice mode for
+  // this extension), NOT the page-level speech-recognition adapter. Launcher
+  // semantics: checking it opens the panel and the box doesn't stay checked.
+  const vcToggle = document.getElementById('voiceCommands');
+  if (vcToggle) {
+    vcToggle.checked = false;
+    vcToggle.addEventListener('change', (e) => {
+      if (e.target.checked) { openVoicePanel(); e.target.checked = false; }
+    });
+  }
+  // One-time cleanup: pre-rewire storage may hold voiceCommands=true, which
+  // used to restart page-level listening on every page load.
+  if (settings.voiceCommands) chrome.storage.sync.set({ voiceCommands: false });
 
   Object.entries(simpleTools).forEach(([id, toolName]) => {
     const el = document.getElementById(id);
@@ -158,6 +186,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       el.checked = settings[id] === true;
       el.addEventListener('change', async (e) => {
         await chrome.storage.sync.set({ [id]: e.target.checked });
+        recordNonProfileSettings({ [id]: e.target.checked });
         if (e.target.checked) sendToContent({ type: 'enableTool', tool: toolName });
         else sendToContent({ type: 'disableTool', tool: toolName });
       });
@@ -174,6 +203,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   focusModeEl.addEventListener('change', async (e) => {
     await chrome.storage.sync.set({ focusMode: e.target.checked });
+    recordNonProfileSettings({ focusMode: e.target.checked });
     focusOptions.classList.toggle('show', e.target.checked);
     if (e.target.checked) sendFocusModeUpdate();
     else sendToContent({ type: 'disableTool', tool: 'FocusMode' });
@@ -182,6 +212,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ['hideDistractions', 'showProgress'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', async (e) => {
       await chrome.storage.sync.set({ [id]: e.target.checked });
+      recordNonProfileSettings({ [id]: e.target.checked });
       if (focusModeEl.checked) sendFocusModeUpdate();
     });
   });
@@ -358,7 +389,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       else {
         await resetAllUI(true);
         sendToContent({ type: 'revertAll' });
-        applyPreset(mergePresets(selectedProfiles));
+        const merged = mergePresets(selectedProfiles);
+        recordNonProfileSettings(merged);
+        applyPreset(merged);
       }
     });
   });
@@ -397,10 +430,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     storageReset.lineHeight = 1.5;
     storageReset.letterSpacing = 0;
     if (!preserveProfile) storageReset.selectedProfiles = [];
+    // A full reset wipes the layered bookkeeping and base-profile selection
+    // too — everything returns to a clean slate.
+    if (!preserveProfile) {
+      storageReset.baseProfiles = [];
+      storageReset.nonProfileSettings = {};
+      document.querySelectorAll('#baseProfileGrid input').forEach(cb => { cb.checked = false; });
+    }
     await chrome.storage.sync.set(storageReset);
   }
 
   function applyPreset(preset) {
+    // Voice support means the harness Voice Assistant (side panel → local
+    // extension-service), never the page-level speech-recognition adapter:
+    // open the panel off this same click and force the page-STT flag off
+    // (persisting false below also stops the on-page-load autostart).
+    if (preset.voiceCommands) {
+      openVoicePanel();
+      preset = { ...preset, voiceCommands: false };
+    }
     const has = (k) => preset[k] !== undefined;
     const num = (v) => typeof v === 'number' ? v : parseFloat(v) || 0;
 
@@ -493,6 +541,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (has(key)) toolStorage[key] = !!preset[key];
     });
     if (Object.keys(toolStorage).length > 0) chrome.storage.sync.set(toolStorage);
+
+    // Keep the Librarian's general-scope memory in step with what we just
+    // persisted. At page load the Librarian's learned preferences overlay the
+    // storage baseline (content.js init), so a stale "You set autoCaptions to
+    // false" memory would silently override the profile the user just chose.
+    const RECORDABLE = new Set(['darkMode', 'motionReducer', 'readerMode', 'keyboardNav',
+      'voiceCommands', 'focusMode', 'hideDistractions', 'showProgress', 'colorBlindMode',
+      'contrastMode', 'fontScale', 'lineHeight', 'letterSpacing', 'dyslexiaFont',
+      'largeCursor', 'enhanceFocus', 'readingGuide', 'autoWcagFix', 'autoFixLabels',
+      'autoDescribe', 'autoVideoDescribe', 'autoCaptions', 'autoSimplify', 'autoSummarize']);
+    const librarianRecord = {};
+    for (const [k, v] of Object.entries(preset)) {
+      if (RECORDABLE.has(k)) librarianRecord[k] = v;
+    }
+    if (Object.keys(librarianRecord).length) {
+      sendMessageP({ type: 'librarianRecordScopedSettings', scope: 'general', settings: librarianRecord })
+        .catch(() => {});
+    }
   }
 
   // Reset all
@@ -663,6 +729,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // request writes the global baseline as before.
   async function applySuggestionSettings(suggestion) {
     if (!suggestion?.settings || !Object.keys(suggestion.settings).length) return;
+    // Voice → the harness Voice Assistant panel. Handled here (before any
+    // await) so the user gesture from the Apply click still carries for the
+    // scoped path; voiceCommands=false still flows through so any previously
+    // stored page-STT flag gets turned off.
+    if (suggestion.settings.voiceCommands) {
+      openVoicePanel();
+      suggestion.settings = { ...suggestion.settings, voiceCommands: false };
+    }
     const scope = suggestion.scope;
     if (scope && scope !== 'general') {
       await sendMessageSafe({
@@ -670,6 +744,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       await sendToContent({ type: 'applyProfile', settings: suggestion.settings });
     } else {
+      // Typed suggestions layer on top of the base-profile checkboxes:
+      // record their contribution so a later profile-uncheck restores these
+      // values instead of resetting them.
+      recordNonProfileSettings(suggestion.settings);
       applyPreset(suggestion.settings);
     }
   }
@@ -840,6 +918,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       applyBtn.addEventListener('click', async () => {
         await resetAllUI(true);
         sendToContent({ type: 'revertAll' });
+        recordNonProfileSettings(p.settings);
         applyPreset(p.settings);
       });
 
@@ -875,7 +954,270 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Assistant: agentic browser task sent to the local extension-service.
   setupAssistantPanel();
+
+  // Skills: the Engineer (adaptive skill builder) + the Skills db.
+  setupSkillsPanel();
+
+  // Base ability profiles (blind, deaf, dyslexia, …) — rendered from the
+  // toolkit's profile catalog (AA_PROFILES, bundled from the package).
+  // Checking profiles applies the union of their settings through the same
+  // applyPreset path the AI suggestions use (so voiceCommands → the harness
+  // Voice Assistant panel, unknown settings ignored); unchecking turns the
+  // dropped settings back off. Selection persists and seeds the Librarian's
+  // supportAreas, which is what skill retrieval matches on.
+  async function setupBaseProfiles() {
+    const grid = document.getElementById('baseProfileGrid');
+    if (!grid || !globalThis.AA_PROFILES) return;
+    const { baseProfiles } = await chrome.storage.sync.get(['baseProfiles']);
+    const selected = new Set(baseProfiles || []);
+
+    for (const [id, p] of Object.entries(AA_PROFILES.profiles)) {
+      const label = document.createElement('label');
+      label.className = 'profile-checkbox';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = id;
+      cb.checked = selected.has(id);
+      label.append(cb, ` ${p.name}`);
+      if (p.description) label.title = p.description;
+      grid.append(label);
+    }
+
+    // Profile id → Librarian supportAreas (the registry's vocabulary).
+    const SUPPORT_AREAS = {
+      blind: ['vision'], lowVision: ['vision'], colorBlind: ['vision'],
+      deaf: ['hearing'], motor: ['motor'], dyslexia: ['reading'],
+      adhd: ['cognitive'], cognitive: ['cognitive'],
+      olderAdult: ['vision', 'cognitive'], anxiety: ['sensory'],
+      sensory: ['sensory'], photosensitive: ['vision', 'sensory'],
+    };
+    const NUMERIC_DEFAULTS = { fontScale: 100, lineHeight: 1.5, letterSpacing: 0 };
+
+    // Local additions on top of the toolkit's profile data: our voice mode is
+    // a spoken assistant (talks back), so unlike the toolkit's page-level
+    // voice commands it belongs in the vision profiles too. voiceCommands
+    // routes to the harness Voice Assistant panel via applyPreset.
+    const PROFILE_TOOL_EXTRAS = {
+      blind: { voiceCommands: true },
+      lowVision: { voiceCommands: true },
+    };
+    const mergeTools = (ids) => {
+      const union = AA_PROFILES.mergeProfileTools(ids);
+      for (const id of ids) Object.assign(union, PROFILE_TOOL_EXTRAS[id] || {});
+      return union;
+    };
+
+    let prevUnion = mergeTools([...selected]);
+    grid.addEventListener('change', async (e) => {
+      const cb = e.target;
+      if (cb.type !== 'checkbox') return;
+      // Re-derive from the DOM (a full Reset unchecks boxes externally).
+      selected.clear();
+      grid.querySelectorAll('input:checked').forEach((b) => selected.add(b.value));
+      const union = mergeTools([...selected]);
+      // Voice panel must open synchronously off the click gesture — before
+      // the storage await below consumes it (applyPreset's own intercept
+      // would run too late here).
+      if (union.voiceCommands && !prevUnion.voiceCommands) openVoicePanel();
+      // Settings no longer backed by any checked profile: restore the value a
+      // non-checkbox source (typed suggestion, manual toggle, custom profile)
+      // last set, else reset to the default.
+      const { nonProfileSettings } = await chrome.storage.sync.get(['nonProfileSettings']);
+      const layered = nonProfileSettings || {};
+      const preset = {};
+      for (const k of Object.keys(prevUnion)) {
+        if (k in union) continue;
+        if (k in layered) preset[k] = layered[k];
+        else preset[k] = (k in NUMERIC_DEFAULTS) ? NUMERIC_DEFAULTS[k] : false;
+      }
+      Object.assign(preset, union);
+      prevUnion = union;
+      applyPreset(preset);
+      chrome.storage.sync.set({ baseProfiles: [...selected] });
+      const areas = [...new Set([...selected].flatMap((id) => SUPPORT_AREAS[id] || []))];
+      sendMessageP({ type: 'librarianSetProfileField', path: 'supportAreas', value: areas })
+        .catch(() => {});
+    });
+  }
+  setupBaseProfiles();
 });
+
+// Skills panel — the toolkit's adaptive-agent loop, popup edition:
+// find-or-build (reuse offered before the Engineer is asked) → try on the
+// live page (nothing persisted) → feedback → revise → save only on an
+// explicit click. All skill logic runs in the background service worker
+// (librarian* messages); this panel is UI + the try-on-page bridge.
+function setupSkillsPanel() {
+  const needInput = document.getElementById('skillNeedInput');
+  const findBtn = document.getElementById('skillFindBtn');
+  const statusEl = document.getElementById('skillStatus');
+  if (!needInput || !findBtn) return;
+
+  const matchCard = document.getElementById('skillMatchCard');
+  const builtCard = document.getElementById('skillBuiltCard');
+
+  // View SKILL.md collapsible (same pattern as Service settings).
+  const mdSection = document.getElementById('skillMdSection');
+  mdSection.addEventListener('click', (e) => {
+    if (e.target.closest('.collapsible-header')) mdSection.classList.toggle('open');
+  });
+  mdSection.querySelector('.collapsible-header').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); mdSection.classList.toggle('open'); }
+  });
+  let matchSkill = null;   // the offered existing skill
+  let builtSkill = null;   // the Engineer's current (unsaved) skill
+  let lastNeed = '';
+
+  const setStatus = (text) => { statusEl.textContent = text || ''; };
+
+  // Apply a skill's resolved plan to the active tab, without persisting:
+  // adapter settings go through the content script's settingsChanged path;
+  // action steps are handed to the Assistant (extension-service).
+  async function applyPlan(skill, label) {
+    const resp = await sendMessageP({ type: 'librarianResolveSkill', skill });
+    const plan = resp && resp.plan;
+    if (!plan) { setStatus('Could not resolve that skill.'); return; }
+    if (Object.keys(plan.settings).length) {
+      // applyProfile is the content script's full visual-settings path
+      // (darkMode, motionReducer, focusMode, fontScale, …); settingsChanged
+      // only covers the AI auto-* keys.
+      await sendToContent({ type: 'applyProfile', settings: plan.settings });
+    }
+    let note = `Applied "${label}": ${Object.entries(plan.settings).map(([k, v]) => `${k}=${v}`).join(', ') || 'no visual settings'}.`;
+    if (plan.actions.length) {
+      // Action steps are agent tasks — run the first through the Assistant.
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      chrome.runtime.sendMessage(
+        { type: 'assistantRun', prompt: plan.actions[0].prompt, activeUrl: tab && tab.url },
+        () => { void chrome.runtime.lastError; });
+      note += ` Running action via the Assistant: "${plan.actions[0].name}" (see Assistant panel).`;
+    }
+    setStatus(note);
+  }
+
+  // find-or-build: offer an existing skill before asking the Engineer.
+  findBtn.addEventListener('click', async () => {
+    lastNeed = needInput.value.trim();
+    if (!lastNeed) return;
+    matchCard.hidden = true;
+    builtCard.hidden = true;
+    setStatus('Checking your skills…');
+    const resp = await sendMessageP({ type: 'librarianFindSkillForNeed', need: lastNeed });
+    matchSkill = resp && resp.skill;
+    if (matchSkill) {
+      document.getElementById('skillMatchDesc').textContent =
+        `"${matchSkill.name}" (${matchSkill.source}) — ${matchSkill.description}`;
+      matchCard.hidden = false;
+      setStatus('');
+    } else {
+      await buildNow();
+    }
+  });
+
+  document.getElementById('skillUseMatchBtn').addEventListener('click', async () => {
+    if (!matchSkill) return;
+    matchCard.hidden = true;
+    await applyPlan(matchSkill, matchSkill.name);
+  });
+
+  document.getElementById('skillBuildAnywayBtn').addEventListener('click', async () => {
+    matchCard.hidden = true;
+    await buildNow();
+  });
+
+  async function buildNow(previous = null, feedback = '') {
+    setStatus(feedback ? 'The Engineer is revising the skill…' : 'The Engineer is building a skill…');
+    findBtn.disabled = true;
+    const result = await sendMessageP({
+      type: 'librarianBuildSkill', need: lastNeed, opts: { previous, feedback },
+    }).catch((e) => ({ skill: null, valid: false, errors: [e.message] }));
+    findBtn.disabled = false;
+    builtSkill = result && result.skill;
+    if (!builtSkill) {
+      setStatus(`The Engineer couldn't build that: ${(result && result.errors || ['no response']).join('; ')}`);
+      return;
+    }
+    setStatus('');
+    document.getElementById('skillBuiltTitle').textContent =
+      feedback ? 'The Engineer revised the skill' : 'The Engineer built a skill';
+    document.getElementById('skillBuiltDesc').textContent =
+      `"${builtSkill.name}" — ${builtSkill.description}`;
+    document.getElementById('skillBuiltValidity').textContent = result.valid
+      ? 'Validated against the adapter registry. Nothing is saved until you say so.'
+      : `Validation problems: ${result.errors.join('; ')}`;
+    document.getElementById('skillBuiltMd').textContent =
+      (globalThis.AA_SKILL_CORE && AA_SKILL_CORE.serializeSkill(builtSkill)) || JSON.stringify(builtSkill, null, 2);
+    document.getElementById('skillSaveBtn').disabled = !result.valid;
+    builtCard.hidden = false;
+  }
+
+  document.getElementById('skillTryBtn').addEventListener('click', async () => {
+    if (builtSkill) await applyPlan(builtSkill, `${builtSkill.name} (unsaved — try before you save)`);
+  });
+
+  document.getElementById('skillReviseBtn').addEventListener('click', async () => {
+    const feedback = document.getElementById('skillFeedbackInput').value.trim();
+    if (!builtSkill || !feedback) return;
+    await buildNow(builtSkill, feedback);
+  });
+
+  document.getElementById('skillDiscardBtn').addEventListener('click', () => {
+    builtCard.hidden = true;
+    builtSkill = null;
+    setStatus('Discarded — nothing was saved.');
+  });
+
+  document.getElementById('skillSaveBtn').addEventListener('click', async () => {
+    if (!builtSkill) return;
+    const resp = await sendMessageP({ type: 'librarianSaveSkill', skill: builtSkill });
+    if (resp && resp.saved) {
+      setStatus(`Saved "${builtSkill.name}" to your skills.`);
+      builtCard.hidden = true;
+      builtSkill = null;
+      renderSkillList();
+    } else {
+      setStatus(`Save refused: ${(resp && resp.errors || ['no response']).join('; ')}`);
+    }
+  });
+
+  // The Skills db: built-in + the user's own, with Apply (and Delete for mine).
+  async function renderSkillList() {
+    const list = document.getElementById('skillList');
+    const resp = await sendMessageP({ type: 'librarianListSkills' }).catch(() => null);
+    const skills = (resp && resp.skills) || [];
+    document.getElementById('skillCount').textContent = String(skills.length);
+    list.textContent = '';
+    for (const s of skills) {
+      const row = document.createElement('div');
+      row.className = 'skill-item';
+      const badge = document.createElement('span');
+      badge.className = `skill-badge skill-badge-${s.source}`;
+      badge.textContent = s.source === 'mine' ? 'yours' : 'built-in';
+      const name = document.createElement('span');
+      name.className = 'skill-item-name';
+      name.textContent = s.name;
+      name.title = s.description || '';
+      const applyBtn = document.createElement('button');
+      applyBtn.className = 'btn btn-secondary btn-sm';
+      applyBtn.textContent = 'Apply';
+      applyBtn.addEventListener('click', () => applyPlan(s, s.name));
+      row.append(badge, name, applyBtn);
+      if (s.source === 'mine') {
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn btn-secondary btn-sm';
+        delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', async () => {
+          await sendMessageP({ type: 'librarianDeleteSkill', name: s.name });
+          renderSkillList();
+        });
+        row.append(delBtn);
+      }
+      list.append(row);
+    }
+  }
+
+  renderSkillList();
+}
 
 // Assistant panel: service settings (serviceUrl/serviceToken in storage.sync)
 // plus a task box that hands off to background's assistantRun. The live view is
@@ -900,12 +1242,7 @@ function setupAssistantPanel() {
     if (!chrome.sidePanel?.open) {
       voicePanelBtn.hidden = true;
     } else {
-      voicePanelBtn.addEventListener('click', async () => {
-        try {
-          const w = await chrome.windows.getCurrent();
-          await chrome.sidePanel.open({ windowId: w.id });
-        } catch (e) { /* older Chrome or gesture lost — no-op */ }
-      });
+      voicePanelBtn.addEventListener('click', () => { openVoicePanel(); });
     }
   }
 
@@ -1065,6 +1402,18 @@ function setupAssistantPanel() {
     chrome.runtime.sendMessage({ type: 'assistantClear' }, () => { void chrome.runtime.lastError; });
     render(null);
   });
+}
+
+// Open the hands-free Voice Assistant side panel — the extension's voice
+// mode (STT/TTS + Assistant → local extension-service). Call synchronously
+// off a user gesture; chrome.sidePanel.open() needs the gesture to survive.
+async function openVoicePanel() {
+  if (!chrome.sidePanel?.open) return false;
+  try {
+    const w = await chrome.windows.getCurrent();
+    await chrome.sidePanel.open({ windowId: w.id });
+    return true;
+  } catch (e) { return false; }
 }
 
 function sendMessageP(msg) {

@@ -1,4 +1,9 @@
 node_modules/
 extension/content/content.bundle.js
 extension/content/content.bundle.js.map
+# Built from the ai-for-accessibility-toolkit package (file: dep) — toolkit
+# code never lives in this tree; rebuild with npm run build.
+extension/lib/skill-core.js
+extension/lib/skill-docs.js
+extension/lib/profiles.js
 *.DS_Store

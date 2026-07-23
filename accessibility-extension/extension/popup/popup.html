@@ -49,6 +49,13 @@
     <div class="ai-loading" id="aiLoading" hidden role="status" aria-live="polite">
       <span class="material-symbols-outlined spin" aria-hidden="true">sync</span> Thinking&hellip;
     </div>
+    <!-- Base ability profiles (toolkit: blind, deaf, dyslexia, …) —
+         checkboxes rendered from AA_PROFILES; selection applies the merged
+         profile settings and persists across popups. -->
+    <div class="base-profile-block" id="baseProfileBlock">
+      <div class="base-profile-label" id="baseProfileLabel">Or check what applies to you:</div>
+      <div class="profile-grid" id="baseProfileGrid" role="group" aria-labelledby="baseProfileLabel"></div>
+    </div>
 
     <!-- Assistant: agentic browser task via local extension-service -->
     <section class="section" id="assistantSection">
@@ -91,6 +98,69 @@
             <button class="btn btn-primary btn-sm" id="saveServiceBtn">Save</button>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- Skills — the Engineer (adaptive skill builder) + Skills db -->
+    <section class="section" id="skillsSection">
+      <div class="section-header" role="button" tabindex="0" aria-expanded="true">
+        <span class="section-title">Skills</span>
+        <span class="section-count" id="skillCount"></span>
+        <span class="section-arrow">&#9660;</span>
+      </div>
+      <div class="section-body">
+        <p class="assistant-desc" id="skillsDesc">A skill is a saved recipe of adaptations. Describe a need — reuse an existing skill or have the Engineer build one for you.</p>
+        <div class="input-group assistant-field">
+          <label for="skillNeedInput">What do you need?</label>
+          <input type="text" id="skillNeedInput" aria-describedby="skillsDesc"
+            placeholder="e.g. bigger text and less clutter when I shop">
+        </div>
+        <div class="assistant-actions">
+          <button class="btn btn-primary btn-sm" id="skillFindBtn">Find or build a skill</button>
+        </div>
+
+        <!-- An existing skill covers the need: offer reuse before building -->
+        <div class="skill-card" id="skillMatchCard" hidden role="region" aria-label="Existing skill found" aria-live="polite">
+          <div class="skill-card-title">An existing skill may cover this</div>
+          <div class="skill-card-desc" id="skillMatchDesc"></div>
+          <div class="assistant-actions">
+            <button class="btn btn-primary btn-sm" id="skillUseMatchBtn">Try it on this page</button>
+            <button class="btn btn-secondary btn-sm" id="skillBuildAnywayBtn">Build a new one</button>
+          </div>
+        </div>
+
+        <!-- The Engineer's (unsaved) build: try → feedback → revise → save -->
+        <div class="skill-card" id="skillBuiltCard" hidden role="region" aria-label="Built skill" aria-live="polite">
+          <div class="skill-card-title" id="skillBuiltTitle">The Engineer built a skill</div>
+          <div class="skill-card-desc" id="skillBuiltDesc"></div>
+          <div class="skill-card-note" id="skillBuiltValidity"></div>
+          <div class="collapsible" id="skillMdSection">
+            <div class="collapsible-header" role="button" tabindex="0" aria-expanded="false">
+              <span style="flex:1;font-size:12px">View SKILL.md</span>
+              <span class="coll-arrow material-symbols-outlined">chevron_right</span>
+            </div>
+            <div class="collapsible-body">
+              <pre class="skill-md" id="skillBuiltMd"></pre>
+            </div>
+          </div>
+          <div class="assistant-actions">
+            <button class="btn btn-primary btn-sm" id="skillTryBtn">Try on this page</button>
+            <button class="btn btn-primary btn-sm" id="skillSaveBtn">Save skill</button>
+            <button class="btn btn-secondary btn-sm" id="skillDiscardBtn">Discard</button>
+          </div>
+          <div class="input-group assistant-field">
+            <label for="skillFeedbackInput">Not right? Tell the Engineer what to change</label>
+            <input type="text" id="skillFeedbackInput" placeholder="e.g. also make it dark">
+          </div>
+          <div class="assistant-actions">
+            <button class="btn btn-secondary btn-sm" id="skillReviseBtn">Revise</button>
+          </div>
+        </div>
+
+        <div class="skill-status" id="skillStatus" role="status" aria-live="polite"></div>
+
+        <!-- Skills db: built-in + the user's own -->
+        <div id="skillList" aria-label="Your skills"></div>
       </div>
     </section>
 
@@ -391,6 +461,8 @@
   </div>
 
   <script src="../lib/taxonomy.js"></script>
+  <script src="../lib/skill-core.js"></script>
+  <script src="../lib/profiles.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

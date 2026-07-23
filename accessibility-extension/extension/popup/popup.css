@@ -599,3 +599,40 @@ footer {
 }
 .memory-delete:hover { background: var(--grey-100); color: var(--red); }
 .memory-empty { padding: 10px; font-size: 11px; color: var(--grey-500); font-style: italic; }
+
+/* ---- Skills panel (the Engineer + Skills db) ---- */
+.skill-card {
+  border: 1px solid var(--grey-200); border-radius: 6px; padding: 10px;
+  background: white; margin-bottom: 8px;
+}
+.skill-card-title {
+  font-weight: 600; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.4px; color: var(--blue); margin-bottom: 4px;
+}
+.skill-card-desc { font-size: 12px; line-height: 1.45; margin-bottom: 6px; word-break: break-word; }
+.skill-card-note { font-size: 11px; color: var(--grey-700); margin-bottom: 6px; line-height: 1.4; }
+.skill-md {
+  font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; line-height: 1.5;
+  background: var(--grey-100); border-radius: 4px; padding: 8px;
+  white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; margin: 0;
+}
+.skill-status:empty { display: none; }
+.skill-status {
+  border: 1px solid var(--grey-200); border-radius: 6px; padding: 8px 10px;
+  background: white; font-size: 12px; line-height: 1.45; margin-bottom: 6px;
+}
+.skill-item {
+  display: flex; align-items: center; gap: 6px; padding: 5px 0;
+  border-bottom: 1px solid var(--grey-100); font-size: 12px;
+}
+.skill-item:last-child { border-bottom: none; }
+.skill-item-name { flex: 1; font-weight: 500; word-break: break-word; }
+.skill-badge {
+  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 2px 5px; border-radius: 8px; background: var(--grey-100); color: var(--grey-700);
+}
+.skill-badge-mine { background: #e8f0fe; color: var(--blue); }
+
+/* ---- Base ability profiles under the support input ---- */
+.base-profile-block { margin: 0 12px 10px; }
+.base-profile-label { font-size: 11px; color: var(--grey-700); margin-bottom: 6px; }

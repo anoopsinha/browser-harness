@@ -186,8 +186,8 @@ globalThis.AA_TOOLS = {
   },
   {
     "id": "voice-commands",
-    "name": "Voice Commands",
-    "description": "Hands-free browsing with voice commands, visual feedback HUD, interim results, and an expandable command set.",
+    "name": "Voice Assistant",
+    "description": "Hands-free voice control: opens the Voice Assistant side panel — speak a task, the Assistant drives the browser and speaks the result back.",
     "supportAreas": [
       "motor"
     ],
@@ -428,7 +428,7 @@ globalThis.AA_TOOLS = {
   },
   "voiceCommands": {
     "type": "boolean",
-    "description": "Voice-controlled browsing"
+    "description": "Voice-controlled browsing via the Voice Assistant side panel"
   },
   "contrastMode": {
     "type": "enum",
