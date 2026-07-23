@@ -7,6 +7,13 @@ Machine-readable instructions for starting the extension-service, the web consol
 - `.env` at the repo root with `GEMINI_API_KEY=<key>` (required by the LLM backend in `api.py`).
 - Node.js + npm (for the extension build).
 - Python (the service `run.sh` creates/reuses its own venv; the console reuses it).
+- **AI-for-Accessibility-Toolkit checked out as a sibling of this repo** at
+  `../AI-for-Accessibility-Toolkit-Draft` (clone from
+  `anoopsinha/AI-for-Accessibility-Toolkit-Draft`). The extension consumes it
+  as an npm `file:` dependency — `npm install` symlinks it and `npm run build`
+  bundles the skill core, builtin SKILL.md playbooks, and ability profiles
+  into gitignored `extension/lib/` artifacts. Without the sibling checkout,
+  `npm install`/`npm run build` fail.
 
 ## 1. Start the extension-service (port 8787)
 
