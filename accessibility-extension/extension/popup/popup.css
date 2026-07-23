@@ -636,3 +636,8 @@ footer {
 /* ---- Base ability profiles under the support input ---- */
 .base-profile-block { margin: 0 12px 10px; }
 .base-profile-label { font-size: 11px; color: var(--grey-700); margin-bottom: 6px; }
+
+/* Mic button while capturing the support question */
+#aiSupportMicBtn.listening { background: var(--red, #d93025); color: #fff; }
+#aiSupportMicBtn.listening .material-symbols-outlined { animation: micPulse 1.2s ease-in-out infinite; }
+@keyframes micPulse { 50% { opacity: 0.45; } }

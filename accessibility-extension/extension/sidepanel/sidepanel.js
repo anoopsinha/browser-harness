@@ -555,6 +555,19 @@
     if (msg && msg.type === 'toggleVoice') requestToggle();
   });
 
+  // Ctrl+M pressed while the panel was closed: the background opened the panel
+  // and left a pendingVoiceStart marker — start listening right away so the
+  // one shortcut means "talk to the assistant" whether or not the panel was up.
+  (async () => {
+    try {
+      const { pendingVoiceStart } = await chrome.storage.session.get(['pendingVoiceStart']);
+      if (pendingVoiceStart && Date.now() - pendingVoiceStart < 10000) {
+        await chrome.storage.session.remove('pendingVoiceStart');
+        requestToggle();
+      }
+    } catch (_) {}
+  })();
+
   // =====================================================================
   //  Bridge: assistant state transitions → voice earcons + speech
   // =====================================================================

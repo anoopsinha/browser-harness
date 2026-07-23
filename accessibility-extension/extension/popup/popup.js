@@ -617,6 +617,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('aiSuggestionSummary').textContent = msg;
     document.getElementById('aiSuggestionList').innerHTML = '';
     aiSuggestion.hidden = false;
+    voiceQueryPending = false; // failed voice query must not chime on a later success
   }
 
   function finishAILoading() {
@@ -721,6 +722,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     aiSuggestion.hidden = false;
+    // Land focus on Apply so a plain Enter accepts the suggestions — matters
+    // most for the voice flow (speak → suggestions → Enter), and the card's
+    // aria-live region has already announced the content.
+    document.getElementById('aiApplyBtn').focus();
+    // Spoken query → audible "ready" cue as focus lands on Apply.
+    if (voiceQueryPending) {
+      voiceQueryPending = false;
+      supportChime();
+    }
   }
 
   // Apply the suggestion's built-in settings. A scoped request
@@ -778,6 +788,113 @@ document.addEventListener('DOMContentLoaded', async () => {
   aiInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitSupportQuery(aiInput.value);
   });
+
+  // --- Voice input for the support box (mic button, or Alt+S globally) ---
+  // Local SpeechRecognition in the popup page: interim results land in the
+  // textbox, the final transcript auto-submits the question. Mic permission
+  // is per extension origin; if it's missing, the same grant-in-a-tab flow
+  // the side panel uses (permission/mic.html) is opened.
+  const aiMicBtn = document.getElementById('aiSupportMicBtn');
+  let supportRec = null;
+  let supportListening = false;
+  // Set when a spoken query is submitted; the suggestion render plays a
+  // completion chime (and clears it) so the user knows Enter will now apply.
+  let voiceQueryPending = false;
+
+  // Earcon: same two-note "done" chime as the voice panel (Web Audio, no
+  // asset). Popup audio is allowed here because the flow started from a user
+  // gesture (mic button / Alt+S command).
+  let supportAC = null;
+  function supportChime() {
+    try {
+      if (!supportAC) supportAC = new (window.AudioContext || window.webkitAudioContext)();
+      if (supportAC.state === 'suspended') supportAC.resume();
+      const blip = (freq, dur, when, vol) => {
+        const t = supportAC.currentTime + when;
+        const o = supportAC.createOscillator();
+        const g = supportAC.createGain();
+        o.type = 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(vol, t + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g).connect(supportAC.destination);
+        o.start(t);
+        o.stop(t + dur + 0.02);
+      };
+      blip(660, 0.12, 0, 0.06);
+      blip(880, 0.18, 0.11, 0.06);
+    } catch (_) {}
+  }
+
+  async function ensureSupportMic() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      return true;
+    } catch (_) {
+      try { chrome.tabs.create({ url: chrome.runtime.getURL('permission/mic.html') }); } catch (_) {}
+      showAIError('Opened a tab to enable the microphone — click Allow there, then try the mic again.');
+      return false;
+    }
+  }
+
+  async function startSupportVoiceInput() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { showAIError('No speech recognition in this browser.'); return; }
+    if (supportListening) { try { supportRec && supportRec.stop(); } catch (_) {} return; }
+    if (!(await ensureSupportMic())) return;
+    supportListening = true;
+    aiMicBtn.classList.add('listening');
+    aiInput.value = '';
+    aiInput.placeholder = 'Listening… speak, then pause to submit';
+    const rec = new SR();
+    supportRec = rec;
+    rec.lang = 'en-US';
+    rec.interimResults = true;
+    rec.continuous = false; // one utterance → submit
+    let finalText = '';
+    rec.onresult = (e) => {
+      let interim = '';
+      for (const res of e.results) {
+        if (res.isFinal) finalText += res[0].transcript;
+        else interim += res[0].transcript;
+      }
+      aiInput.value = (finalText + interim).trim();
+    };
+    rec.onerror = (e) => {
+      supportListening = false;
+      aiMicBtn.classList.remove('listening');
+      aiInput.placeholder = 'What support do you need? e.g. "I\'m tired and can\'t see well"';
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') ensureSupportMic();
+    };
+    rec.onend = () => {
+      supportListening = false;
+      aiMicBtn.classList.remove('listening');
+      aiInput.placeholder = 'What support do you need? e.g. "I\'m tired and can\'t see well"';
+      const text = (finalText || aiInput.value).trim();
+      if (text) {
+        voiceQueryPending = true;
+        submitSupportQuery(text);
+      }
+    };
+    try { rec.start(); } catch (_) { supportListening = false; aiMicBtn.classList.remove('listening'); }
+  }
+
+  if (aiMicBtn) aiMicBtn.addEventListener('click', startSupportVoiceInput);
+
+  // Armed by the Alt+S command (background sets pendingVoiceSupport and opens
+  // the popup; the tab fallback passes ?voice=1 instead).
+  (async () => {
+    try {
+      if (new URLSearchParams(location.search).get('voice') === '1') { startSupportVoiceInput(); return; }
+      const { pendingVoiceSupport } = await chrome.storage.session.get(['pendingVoiceSupport']);
+      if (pendingVoiceSupport && Date.now() - pendingVoiceSupport < 10000) {
+        await chrome.storage.session.remove('pendingVoiceSupport');
+        startSupportVoiceInput();
+      }
+    } catch (_) {}
+  })();
 
   // --- Custom Profiles ---
   const ALL_SETTING_KEYS = [

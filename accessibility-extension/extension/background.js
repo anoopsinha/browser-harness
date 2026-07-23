@@ -19,9 +19,35 @@ Datastore.runMigrations().catch((e) =>
 // even while the web page (not the panel) is focused. chrome.commands fires
 // regardless of focus; we relay it to the panel via a runtime message.
 if (chrome.commands && chrome.commands.onCommand) {
-  chrome.commands.onCommand.addListener((command) => {
+  chrome.commands.onCommand.addListener(async (command) => {
     if (command === 'toggle-voice') {
-      chrome.runtime.sendMessage({ type: 'toggleVoice' }, () => { void chrome.runtime.lastError; });
+      // Ctrl+M: if the Voice Assistant panel isn't open yet, open it and mark
+      // that it should start listening on boot; else toggle listening there.
+      // (A chrome.commands press is a user gesture, so sidePanel.open works.)
+      let hasPanel = false;
+      try {
+        const ctxs = await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] });
+        hasPanel = ctxs.length > 0;
+      } catch (_) {}
+      if (hasPanel) {
+        chrome.runtime.sendMessage({ type: 'toggleVoice' }, () => { void chrome.runtime.lastError; });
+      } else {
+        try {
+          await chrome.storage.session.set({ pendingVoiceStart: Date.now() });
+          const win = await chrome.windows.getLastFocused();
+          await chrome.sidePanel.open({ windowId: win.id });
+        } catch (_) {}
+      }
+    } else if (command === 'voice-support') {
+      // Alt+S: open the popup with voice capture armed for the
+      // "What support do you need?" box. openPopup needs Chrome 127+; fall
+      // back to the popup page in a tab (same UI, ?voice=1 arms capture).
+      try { await chrome.storage.session.set({ pendingVoiceSupport: Date.now() }); } catch (_) {}
+      try {
+        await chrome.action.openPopup();
+      } catch (_) {
+        try { chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html?voice=1') }); } catch (_) {}
+      }
     } else if (command === 'stop-task') {
       cancelAssistant(); // global Ctrl+Shift+M — works even while the page is focused
     }
