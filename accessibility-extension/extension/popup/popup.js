@@ -397,12 +397,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   async function resetAllUI(preserveProfile = false) {
+    // The user's Reset button (preserveProfile=false) means ALL settings off —
+    // including the default-on AI tools. The internal pre-profile-apply reset
+    // (preserveProfile=true) keeps those AI defaults on, so applying a saved
+    // profile that doesn't mention them doesn't silently lose them.
+    const defaultOnIds = ['showProgress', 'autoDescribe', 'autoWcagFix', 'autoFixLabels'];
     const togglesOff = ['darkMode', 'readerMode', 'focusMode', 'keyboardNav', 'voiceCommands', 'motionReducer',
       'dyslexiaFont', 'largeCursor', 'enhanceFocus', 'readingGuide', 'autoCaptions', 'autoVideoDescribe',
-      'hideDistractions', 'autoSimplify', 'autoSummarize'];
+      'hideDistractions', 'autoSimplify', 'autoSummarize',
+      ...(preserveProfile ? [] : defaultOnIds)];
     togglesOff.forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
 
-    const togglesOn = ['showProgress', 'autoDescribe', 'autoWcagFix', 'autoFixLabels'];
+    const togglesOn = preserveProfile ? defaultOnIds : [];
     togglesOn.forEach(id => { const el = document.getElementById(id); if (el) el.checked = true; });
 
     setValue('contrastMode', 'none');
@@ -438,6 +444,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.querySelectorAll('#baseProfileGrid input').forEach(cb => { cb.checked = false; });
     }
     await chrome.storage.sync.set(storageReset);
+
+    // Full reset must also overwrite the Librarian's remembered explicit
+    // settings (chrome.storage.local memory shards) — otherwise its
+    // preference overlay re-applies the old values on the next page load and
+    // the reset silently doesn't stick.
+    if (!preserveProfile) {
+      const { selectedProfiles, baseProfiles, nonProfileSettings, ...settingsOnly } = storageReset;
+      sendMessageP({ type: 'librarianRecordScopedSettings', scope: 'general', settings: settingsOnly })
+        .catch(() => {});
+    }
   }
 
   function applyPreset(preset) {
