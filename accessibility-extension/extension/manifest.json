@@ -25,19 +25,29 @@
   },
   "commands": {
     "_execute_action": {
-      "suggested_key": { "default": "Alt+A" },
+      "suggested_key": {
+        "default": "Alt+A"
+      },
       "description": "Open the accessibility popup"
     },
     "voice-support": {
-      "suggested_key": { "default": "Alt+S" },
+      "suggested_key": {
+        "default": "Alt+S"
+      },
       "description": "Speak what support you need"
     },
     "toggle-voice": {
-      "suggested_key": { "default": "Ctrl+M", "mac": "MacCtrl+M" },
+      "suggested_key": {
+        "default": "Ctrl+M",
+        "mac": "MacCtrl+M"
+      },
       "description": "Voice Assistant: open the panel / toggle listening"
     },
     "stop-task": {
-      "suggested_key": { "default": "Ctrl+Shift+M", "mac": "MacCtrl+Shift+M" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+M",
+        "mac": "MacCtrl+Shift+M"
+      },
       "description": "Stop the running Assistant task"
     }
   },
@@ -46,8 +56,19 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/content.bundle.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "lib/axe.min.js",
+        "lib/ally.min.js",
+        "lib/tabbable.min.js",
+        "lib/focus-trap.min.js",
+        "lib/darkreader.js",
+        "lib/readability.js",
+        "lib/easy-speech.js",
+        "content/content.bundle.js"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -58,8 +79,12 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["lib/OpenDyslexic-Regular.woff2"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "lib/OpenDyslexic-Regular.woff2"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

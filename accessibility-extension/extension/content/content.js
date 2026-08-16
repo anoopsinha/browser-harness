@@ -1,361 +1,329 @@
-import { setAIProvider, createChromeAIProvider } from '../../utils/ai.js';
-import { DarkMode } from '../../skills/builtin/dark-mode.js';
-import { FocusMode } from '../../skills/builtin/focus-mode.js';
-import { VisualAssist } from '../../skills/builtin/visual-assist.js';
-import { MotionReducer } from '../../skills/builtin/motion-reducer.js';
-import { ReaderMode } from '../../skills/builtin/reader-mode.js';
-import { ColorFilter } from '../../skills/builtin/color-filter.js';
-import { KeyboardNav } from '../../skills/builtin/keyboard-nav.js';
-import { AutoAltText } from '../../skills/builtin/auto-alt-text.js';
-import { FixContrast } from '../../skills/builtin/fix-contrast.js';
-import { SimplifyText } from '../../skills/builtin/simplify-text.js';
-import { AutoCaptions } from '../../skills/builtin/auto-captions.js';
-import { VoiceCommands } from '../../skills/builtin/voice-commands.js';
-import { ReadAloud } from '../../skills/builtin/read-aloud.js';
-import { GenerateLabels } from '../../skills/builtin/generate-labels.js';
-import { GenerateCaptions } from '../../skills/builtin/generate-captions.js';
-import { WcagFixes } from '../../skills/builtin/wcag-fixes.js';
+// Content script — single-sourced on the ai-for-accessibility-toolkit.
+//
+// The accessibility adapters AND the auditor→fixer orchestration now come from
+// the toolkit package (one source of truth). This file keeps only what is
+// app-specific: the Chrome AI provider bridge (utils/ai.js), the Librarian /
+// site-classification / custom-profile integration, the popup messaging
+// protocol, and stats reporting.
 
+import { setAIProvider } from 'ai-for-accessibility-toolkit/tools/utils/ai.js';
+import { loadSettings, getSettings, isEnabled, updateSettings }
+  from 'ai-for-accessibility-toolkit/tools/profiles/settings.js';
+import { clearAllMarks } from 'ai-for-accessibility-toolkit/tools/utils/dom.js';
+import { runAxeAnalysis, getElementFromNode }
+  from 'ai-for-accessibility-toolkit/tools/auditors/wcag-issues.js';
+import { findEmptyAltImages, findCanvasElements }
+  from 'ai-for-accessibility-toolkit/tools/auditors/missing-alt.js';
+import { findAmbiguousLinks }
+  from 'ai-for-accessibility-toolkit/tools/auditors/missing-labels.js';
+import {
+  getAxeHandler,
+  generateImageAlt, generateCanvasDescription, generateVideoDescription,
+  simplifyText, summarizeContent,
+  fixTargetBlank, fixPositiveTabindex, improveAmbiguousLinks, fixAllTables, fixLandmarks,
+  VisualAssist, DarkMode, MotionReducer, FocusMode, ReadAloud, ReaderMode, VoiceCommands,
+  KeyboardNavigator, ColorBlindMode, AutoTranscriber, DismissOverlays, BigTargets,
+  LinkHighlighter, PageOutline, BionicReading, UnpinSticky, TranslatePage, MuteSounds,
+  DefineWords, StopAutoAdvance, ReduceBrightness, SoundVisualizer, LiveRegionAnnouncer,
+  Magnifier, FlashGuard, DescribeOnDemand, ReflowColumn, FocusLocator, PersistentHover,
+  ReadingRuler, ConfirmActions, ReadingSpot, AbbreviationExpand, LanguageTag, ExploreAChart,
+  SpaFocus, SkipLinks, MathA11y, AgentWatch,
+} from 'ai-for-accessibility-toolkit/tools/adapters/index.js';
+import { createChromeAIProvider } from '../../utils/ai.js';
+
+// Bridge the toolkit adapters' AI calls to this extension's background worker.
 setAIProvider(createChromeAIProvider());
 
-const TOOL_MAP = {
-  DarkMode,
-  FocusMode,
-  VisualAssist,
-  MotionReducer,
-  ReaderMode,
-  ColorBlindMode: ColorFilter,
-  KeyboardNavigator: KeyboardNav,
-  VoiceCommands,
-  ReadAloud,
-};
-
-const AI_TOOL_MAP = {
-  autoWcagFix: WcagFixes,
-  autoFixLabels: GenerateLabels,
-  autoDescribe: AutoAltText,
-  autoVideoDescribe: AutoAltText,
-  autoCaptions: GenerateCaptions,
-  autoSimplify: SimplifyText,
-  autoSummarize: SimplifyText,
-};
-
-let enabledTools = new Set();
-let aiSettings = {};
-let extensionEnabled = true;
-
+// ── Stats: the toolkit adapters report through these globals ────────────────
 const stats = { wcag: 0, images: 0, labels: 0, text: 0, captions: 0 };
 const fixes = [];
-
-function reportFix(type, element, oldVal, newVal) {
-  if (type === 'wcag') stats.wcag++;
-  else if (type === 'image') stats.images++;
-  else if (type === 'label') stats.labels++;
-  else if (type === 'text') stats.text++;
-  else if (type === 'caption') stats.captions++;
-  fixes.push({ type, element: element || '', old: oldVal || '', new: newVal || '' });
+globalThis.ai4a11yIncrementStat = (key) => { if (key in stats) stats[key]++; };
+globalThis.ai4a11yLogFix = (type, element, oldVal, newVal) => {
+  fixes.push({
+    type,
+    element: typeof element === 'string' ? element : (element?.tagName?.toLowerCase() || ''),
+    old: oldVal || '', new: newVal || '',
+  });
   chrome.runtime.sendMessage({ type: 'fixAdded', stats: { ...stats }, fixes: [...fixes] }).catch(() => {});
+};
+
+// ── Class adapters the popup / profiles toggle by name ──────────────────────
+const TOOL_MAP = {
+  DarkMode, FocusMode, VisualAssist, MotionReducer, ReaderMode,
+  ColorBlindMode, KeyboardNavigator, VoiceCommands, ReadAloud, AutoTranscriber,
+  DismissOverlays, BigTargets, LinkHighlighter, PageOutline, BionicReading,
+  UnpinSticky, TranslatePage, MuteSounds, DefineWords, StopAutoAdvance,
+  ReduceBrightness, SoundVisualizer, LiveRegionAnnouncer, Magnifier, FlashGuard,
+  DescribeOnDemand, ReflowColumn, FocusLocator, PersistentHover, ReadingRuler,
+  ConfirmActions, ReadingSpot, AbbreviationExpand, LanguageTag, ExploreAChart,
+  SpaFocus, SkipLinks, MathA11y, AgentWatch,
+};
+
+const ALL_ADAPTERS = Object.values(TOOL_MAP);
+let isRunning = false;
+let scanTimer = null;
+
+// ── Settings: bridge chrome.storage.sync into the toolkit settings module ───
+// The toolkit ships fixContrast ON by default (for its own basic extension).
+// This app never rewrote text colors on load, and doing so — the fixer recolors
+// low-contrast text white/black by background luminance — surprised users on
+// startup. Keep it OFF unless explicitly enabled. (autoWcagFix/autoFixLabels/
+// autoDescribe stay at the toolkit's ON defaults, matching this app's prior
+// startup behavior; none of them recolor visible text.) This default sits UNDER
+// the user's stored settings, so anything they or a profile turned on wins.
+const APP_DEFAULTS = {
+  fixContrast: false,
+};
+
+async function loadAppSettings() {
+  return loadSettings(async () => ({ ...APP_DEFAULTS, ...(await chrome.storage.sync.get(null)) }));
 }
+
+// ── Visual/preference layer: enable every adapter its setting turns on ──────
+function applyVisualSettings(settings) {
+  const visualOptions = {};
+  if (settings.contrastMode !== undefined) visualOptions.contrastMode = settings.contrastMode || 'none';
+  if (settings.fontScale !== undefined) visualOptions.fontScale = settings.fontScale;
+  if (settings.lineHeight !== undefined) visualOptions.lineHeight = settings.lineHeight;
+  if (settings.letterSpacing !== undefined) visualOptions.letterSpacing = settings.letterSpacing;
+  if (settings.largeCursor) visualOptions.largeCursor = true;
+  if (settings.enhanceFocus) visualOptions.enhanceFocus = true;
+  if (settings.dyslexiaFont) visualOptions.dyslexiaFont = true;
+  if (settings.readingGuide) visualOptions.readingGuide = true;
+
+  const hasVA =
+    (visualOptions.contrastMode && visualOptions.contrastMode !== 'none') ||
+    (visualOptions.fontScale && visualOptions.fontScale !== 100) ||
+    (visualOptions.lineHeight && visualOptions.lineHeight !== 1.5) ||
+    (visualOptions.letterSpacing && visualOptions.letterSpacing !== 0) ||
+    visualOptions.largeCursor || visualOptions.enhanceFocus ||
+    visualOptions.dyslexiaFont || visualOptions.readingGuide;
+  if (hasVA) VisualAssist.enable(visualOptions);
+
+  const colorMode = settings.colorFilter || settings.colorBlindMode;
+  if (colorMode && colorMode !== 'none') ColorBlindMode.enable(colorMode);
+
+  if (settings.focusMode) {
+    FocusMode.enable({ hideDistractions: settings.hideDistractions, showProgress: settings.showProgress });
+  }
+
+  const flags = [
+    ['darkMode', DarkMode], ['motionReducer', MotionReducer], ['readerMode', ReaderMode],
+    ['dismissOverlays', DismissOverlays], ['bigTargets', BigTargets], ['highlightLinks', LinkHighlighter],
+    ['pageOutline', PageOutline], ['bionicReading', BionicReading], ['unpinSticky', UnpinSticky],
+    ['muteSounds', MuteSounds], ['defineWords', DefineWords], ['stopAutoAdvance', StopAutoAdvance],
+    ['reduceBrightness', ReduceBrightness], ['soundVisualizer', SoundVisualizer],
+    ['announceUpdates', LiveRegionAnnouncer], ['magnifier', Magnifier], ['flashGuard', FlashGuard],
+    ['describeOnDemand', DescribeOnDemand], ['reflowColumn', ReflowColumn], ['focusLocator', FocusLocator],
+    ['persistentHover', PersistentHover], ['readingRuler', ReadingRuler], ['confirmActions', ConfirmActions],
+    ['rememberSpot', ReadingSpot], ['expandAbbreviations', AbbreviationExpand], ['languageTag', LanguageTag],
+    ['exploreChart', ExploreAChart], ['spaFocus', SpaFocus], ['skipLinks', SkipLinks],
+    ['mathAccessible', MathA11y], ['keyboardNav', KeyboardNavigator], ['voiceCommands', VoiceCommands],
+    ['agentWatch', AgentWatch],
+  ];
+  for (const [key, adapter] of flags) if (settings[key]) adapter.enable();
+
+  if (settings.translatePage) TranslatePage.enable({ targetLang: settings.translateTo });
+  if (settings.autoCaptions) AutoTranscriber.enable();
+}
+
+// ── AI content-fix pipeline (ported from the toolkit orchestrator) ──────────
+async function runScan() {
+  if (isRunning) return;
+  isRunning = true;
+  try {
+    if (isEnabled('autoWcagFix')) {
+      const violations = await runAxeAnalysis();
+      await processViolations(violations);
+    }
+    await runAdditionalScans();
+    await runTextProcessing();
+  } catch (e) {
+    console.warn('[AI4A11y] Scan failed:', e);
+  } finally {
+    isRunning = false;
+  }
+}
+
+function scheduleScan() {
+  if (scanTimer) clearTimeout(scanTimer);
+  scanTimer = setTimeout(() => { scanTimer = null; runScan(); }, 250);
+}
+
+async function processViolations(violations) {
+  const settings = getSettings();
+  const imageTasks = [];
+  for (const violation of violations) {
+    for (const node of violation.nodes) {
+      const el = getElementFromNode(node);
+      if (!el || el.dataset.ai4a11yProcessed) continue;
+      if (isImageViolation(violation.id) && isEnabled('autoDescribe')) {
+        const handler = getAxeHandler(violation.id);
+        if (handler) imageTasks.push(() => handler(el));
+        continue;
+      }
+      try { await processViolation(violation, node, el, settings); }
+      catch (e) { console.warn(`[AI4A11y] Failed to fix ${violation.id}:`, e); }
+    }
+  }
+  const BATCH = 5;
+  for (let i = 0; i < imageTasks.length; i += BATCH) {
+    await Promise.all(imageTasks.slice(i, i + BATCH).map(fn => fn().catch(() => {})));
+  }
+}
+
+function isImageViolation(ruleId) {
+  return ['image-alt', 'input-image-alt', 'role-img-alt', 'svg-img-alt', 'object-alt', 'area-alt'].includes(ruleId);
+}
+
+async function processViolation(violation, node, el) {
+  const handler = getAxeHandler(violation.id);
+  if (!handler) return;
+  if (violation.id.startsWith('color-contrast') && !isEnabled('fixContrast')) return;
+  if (violation.id.includes('label') && !isEnabled('autoFixLabels')) return;
+  if (violation.id.includes('caption') && !isEnabled('autoCaptions')) return;
+  if (violation.id.startsWith('color-contrast')) {
+    const style = getComputedStyle(el);
+    await handler(el, style.color, style.backgroundColor);
+  } else {
+    await handler(el);
+  }
+}
+
+async function runAdditionalScans() {
+  if (isEnabled('autoDescribe')) {
+    for (const img of findEmptyAltImages()) await generateImageAlt(img);
+    for (const canvas of findCanvasElements()) await generateCanvasDescription(canvas);
+  }
+  if (isEnabled('autoVideoDescribe')) {
+    const videos = Array.from(document.querySelectorAll('video'))
+      .filter(v => !v.dataset.ai4a11yDescribed && !v.getAttribute('aria-label'));
+    for (const video of videos) await generateVideoDescription(video).catch(() => {});
+  }
+  if (isEnabled('autoFixLabels')) {
+    const ambiguousLinks = findAmbiguousLinks();
+    if (ambiguousLinks.length) await improveAmbiguousLinks(ambiguousLinks);
+    await fixAllTables();
+  }
+  if (isEnabled('autoWcagFix')) {
+    fixLandmarks();
+    document.querySelectorAll('a[target="_blank"]').forEach(link => {
+      if (!(link.getAttribute('rel') || '').includes('noopener')) fixTargetBlank(link);
+    });
+    document.querySelectorAll('[tabindex]').forEach(el => {
+      if (parseInt(el.getAttribute('tabindex')) > 0) fixPositiveTabindex(el);
+    });
+  }
+}
+
+async function runTextProcessing() {
+  if (isEnabled('autoSimplify')) {
+    for (const el of findComplexText()) await simplifyText(el);
+  }
+  if (isEnabled('autoSummarize')) {
+    for (const el of findLongContent()) await summarizeContent(el);
+  }
+}
+
+function findComplexText() {
+  return Array.from(document.querySelectorAll('p, li, td, div')).filter(el => {
+    if (el.dataset.ai4a11ySimplified || el.dataset.ai4a11yProcessed) return false;
+    if (el.querySelector('p, div, article, section')) return false;
+    return el.textContent.length > 300;
+  });
+}
+
+function findLongContent() {
+  return Array.from(document.querySelectorAll('p, article, section, .article-body')).filter(el => {
+    if (el.dataset.ai4a11ySummarize || el.dataset.ai4a11yProcessed) return false;
+    if (el.closest('[data-ai4a11y-summarize]')) return false;
+    return el.textContent?.trim().length > 500;
+  });
+}
+
+// ── Enable/disable/revert ───────────────────────────────────────────────────
+let enabledTools = new Set();
 
 function enableTool(toolName, options) {
   const tool = TOOL_MAP[toolName];
   if (!tool) return;
-
-  if (enabledTools.has(toolName) && tool.disable) {
-    tool.disable();
-  }
-
   try {
-    if (options !== undefined) {
-      if (toolName === 'ColorBlindMode') {
-        tool.enable(options);
-      } else {
-        tool.enable(options);
-      }
-    } else {
-      tool.enable();
-    }
+    if (options !== undefined) tool.enable(options); else tool.enable();
     enabledTools.add(toolName);
-    console.log(`[AI4A11y] Enabled ${toolName}`);
-  } catch (e) {
-    console.warn(`[AI4A11y] Failed to enable ${toolName}:`, e);
-  }
-  // Note: user-authored "custom skills" are NOT applied from this content
-  // script. They are registered as user scripts by background.js
-  // (syncCustomUserScripts) and executed by Chrome's user-scripts runtime in
-  // a CSP-permissive world, so they work on pages that disallow unsafe-eval.
+  } catch (e) { console.warn(`[AI4A11y] enable ${toolName} failed:`, e); }
 }
 
 function disableTool(toolName) {
   const tool = TOOL_MAP[toolName];
   if (!tool) return;
-  try {
-    if (tool.disable) tool.disable();
-    enabledTools.delete(toolName);
-    console.log(`[AI4A11y] Disabled ${toolName}`);
-  } catch (e) {
-    console.warn(`[AI4A11y] Failed to disable ${toolName}:`, e);
-  }
+  try { tool.disable?.(); enabledTools.delete(toolName); }
+  catch (e) { console.warn(`[AI4A11y] disable ${toolName} failed:`, e); }
 }
 
 function revertAll() {
-  for (const toolName of enabledTools) {
-    const tool = TOOL_MAP[toolName];
-    if (tool?.disable) {
-      try { tool.disable(); } catch (e) {}
-    }
-  }
+  for (const adapter of ALL_ADAPTERS) { try { adapter.disable?.(); } catch (e) {} }
+  try { ReadAloud.stop?.(); } catch (e) {}
   enabledTools.clear();
 
-  for (const key of Object.keys(AI_TOOL_MAP)) {
-    const tool = AI_TOOL_MAP[key];
-    if (tool?.disable) {
-      try { tool.disable(); } catch (e) {}
+  // Undo the toolkit's DOM-rewriting AI fixers (simplify / contrast / labels).
+  document.querySelectorAll('.ai4a11y-simplified').forEach(el => {
+    const wrap = el.querySelector('.ai4a11y-original-content');
+    if (wrap) {
+      el.querySelector('.ai4a11y-text-content')?.remove();
+      el.querySelector('.ai4a11y-toggle-original')?.remove();
+      while (wrap.firstChild) el.appendChild(wrap.firstChild);
+      wrap.remove();
     }
-  }
-
-  stats.wcag = 0; stats.images = 0; stats.labels = 0; stats.text = 0; stats.captions = 0;
+    el.classList.remove('ai4a11y-simplified');
+  });
+  document.querySelectorAll('.ai4a11y-contrast-fixed').forEach(el => {
+    if (el.dataset.ai4a11yOriginalColor) el.style.color = el.dataset.ai4a11yOriginalColor;
+    el.classList.remove('ai4a11y-contrast-fixed');
+  });
+  clearAllMarks();
+  stats.wcag = stats.images = stats.labels = stats.text = stats.captions = 0;
   fixes.length = 0;
-  console.log('[AI4A11y] All tools reverted');
-}
-
-async function applyAISettings(newSettings) {
-  Object.assign(aiSettings, newSettings);
-
-  if (newSettings.autoWcagFix !== undefined) {
-    if (newSettings.autoWcagFix) {
-      try { await WcagFixes.enable(); } catch (e) { console.warn('[AI4A11y] WcagFixes error:', e); }
-    } else if (WcagFixes.disable) WcagFixes.disable();
-  }
-
-  if (newSettings.autoFixLabels !== undefined) {
-    if (newSettings.autoFixLabels) {
-      try { await GenerateLabels.enable(); } catch (e) { console.warn('[AI4A11y] GenerateLabels error:', e); }
-    } else if (GenerateLabels.disable) GenerateLabels.disable();
-  }
-
-  if (newSettings.autoDescribe !== undefined) {
-    if (newSettings.autoDescribe) {
-      try { await AutoAltText.enable(); } catch (e) { console.warn('[AI4A11y] AutoAltText error:', e); }
-    } else if (AutoAltText.disable) AutoAltText.disable();
-  }
-
-  if (newSettings.autoCaptions !== undefined) {
-    if (newSettings.autoCaptions) {
-      try { await GenerateCaptions.enable(); } catch (e) { console.warn('[AI4A11y] GenerateCaptions error:', e); }
-      // AutoCaptions turns on the platform's own captions (YouTube embeds +
-      // youtube.com native CC) — the path that works without transcription AI.
-      try { AutoCaptions.enable(); } catch (e) { console.warn('[AI4A11y] AutoCaptions error:', e); }
-    } else {
-      if (GenerateCaptions.disable) GenerateCaptions.disable();
-      if (AutoCaptions.disable) AutoCaptions.disable();
-    }
-  }
-
-  if (newSettings.autoSimplify !== undefined) {
-    if (newSettings.autoSimplify) {
-      try { await SimplifyText.enable(); } catch (e) { console.warn('[AI4A11y] SimplifyText error:', e); }
-    } else if (!aiSettings.autoSummarize && SimplifyText.disable) SimplifyText.disable();
-  }
-
-  if (newSettings.autoSummarize !== undefined) {
-    if (newSettings.autoSummarize) {
-      try { await SimplifyText.enable(); } catch (e) { console.warn('[AI4A11y] SimplifyText error:', e); }
-    } else if (!aiSettings.autoSimplify && SimplifyText.disable) SimplifyText.disable();
-  }
 }
 
 function getToolStates() {
   const states = {};
-  for (const toolName of Object.keys(TOOL_MAP)) {
-    states[toolName] = enabledTools.has(toolName);
-  }
+  for (const [name, adapter] of Object.entries(TOOL_MAP)) states[name] = !!adapter.enabled;
   return states;
 }
 
-async function initFromStorage() {
-  try {
-    const settings = await chrome.storage.sync.get([
-      'enabled', 'darkMode', 'readerMode', 'keyboardNav', 'voiceCommands',
-      'motionReducer', 'focusMode', 'hideDistractions', 'showProgress',
-      'colorBlindMode', 'fontScale', 'lineHeight', 'letterSpacing',
-      'contrastMode', 'dyslexiaFont', 'largeCursor', 'enhanceFocus', 'readingGuide',
-      'autoWcagFix', 'autoFixLabels', 'autoDescribe', 'autoVideoDescribe',
-      'autoCaptions', 'autoSimplify', 'autoSummarize'
-    ]);
-
-    if (settings.enabled === false) {
-      extensionEnabled = false;
-      return;
-    }
-
-    if (settings.darkMode) enableTool('DarkMode');
-    if (settings.motionReducer) enableTool('MotionReducer');
-    if (settings.readerMode) enableTool('ReaderMode');
-    if (settings.keyboardNav) enableTool('KeyboardNavigator');
-    // voiceCommands deliberately NOT honored here: voice mode is the harness
-    // Voice Assistant side panel (opened from the popup), never an in-page
-    // speech-recognition session started on load.
-
-    if (settings.focusMode) {
-      enableTool('FocusMode', {
-        hideDistractions: settings.hideDistractions || false,
-        showProgress: settings.showProgress !== false
-      });
-    }
-
-    if (settings.colorBlindMode && settings.colorBlindMode !== 'none') {
-      enableTool('ColorBlindMode', settings.colorBlindMode);
-    }
-
-    const va = {
-      contrastMode: settings.contrastMode || 'none',
-      fontScale: (settings.fontScale || 100) / 100,
-      lineHeight: settings.lineHeight || 1.5,
-      letterSpacing: settings.letterSpacing || 0,
-      dyslexiaFont: settings.dyslexiaFont || false,
-      largeCursor: settings.largeCursor || false,
-      enhanceFocus: settings.enhanceFocus || false,
-      readingGuide: settings.readingGuide || false
-    };
-
-    const hasVA = va.contrastMode !== 'none' || va.fontScale !== 1 ||
-      va.lineHeight !== 1.5 || va.letterSpacing !== 0 ||
-      va.dyslexiaFont || va.largeCursor || va.enhanceFocus || va.readingGuide;
-
-    if (hasVA) enableTool('VisualAssist', va);
-
-    aiSettings = {
-      autoWcagFix: settings.autoWcagFix !== false,
-      autoFixLabels: settings.autoFixLabels !== false,
-      autoDescribe: settings.autoDescribe !== false,
-      autoVideoDescribe: settings.autoVideoDescribe === true,
-      autoCaptions: settings.autoCaptions === true,
-      autoSimplify: settings.autoSimplify === true,
-      autoSummarize: settings.autoSummarize === true,
-    };
-
-    if (aiSettings.autoWcagFix) { try { await WcagFixes.enable(); } catch (e) {} }
-    if (aiSettings.autoFixLabels) { try { await GenerateLabels.enable(); } catch (e) {} }
-    if (aiSettings.autoDescribe) { try { await AutoAltText.enable(); } catch (e) {} }
-    if (aiSettings.autoCaptions) {
-      try { await GenerateCaptions.enable(); } catch (e) {}
-      try { AutoCaptions.enable(); } catch (e) {}
-    }
-    if (aiSettings.autoSimplify || aiSettings.autoSummarize) { try { await SimplifyText.enable(); } catch (e) {} }
-
-    console.log('[AI4A11y] Initialized from stored settings');
-  } catch (e) {
-    console.warn('[AI4A11y] Could not load stored settings:', e);
-  }
+// ── Apply a settings object (custom profile / Librarian prefs) ──────────────
+function applyProfileSettings(settings) {
+  updateSettings(settings);
+  applyVisualSettings(getSettings());
+  scheduleScan();
 }
 
+// ── Message protocol (unchanged surface for the popup / background) ─────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'enableTool') {
-    enableTool(msg.tool, msg.options);
-    sendResponse({ success: true });
-  } else if (msg.type === 'disableTool') {
-    disableTool(msg.tool);
-    sendResponse({ success: true });
-  } else if (msg.type === 'settingsChanged') {
-    applyAISettings(msg.settings || {});
-    sendResponse({ success: true });
-  } else if (msg.type === 'revertAll') {
-    revertAll();
-    sendResponse({ success: true });
-  } else if (msg.type === 'rescan') {
-    revertAll();
-    init();
-    sendResponse({ success: true });
-  } else if (msg.type === 'setEnabled') {
-    extensionEnabled = msg.enabled;
-    if (!msg.enabled) revertAll();
-    else init();
-    sendResponse({ success: true });
-  } else if (msg.type === 'getToolStates') {
-    sendResponse({ states: getToolStates() });
-  } else if (msg.type === 'getStats') {
-    sendResponse({ success: true, stats: { ...stats }, fixes: [...fixes] });
-  } else if (msg.type === 'speakPage') {
-    ReadAloud.speakPage({ rate: msg.rate || 1 });
-    enabledTools.add('ReadAloud');
-    sendResponse({ success: true });
-  } else if (msg.type === 'stopSpeech') {
-    ReadAloud.stop();
-    enabledTools.delete('ReadAloud');
-    sendResponse({ success: true });
-  } else if (msg.type === 'applyProfile') {
-    if (msg.settings) {
-      applyProfileSettings(msg.settings);
-    }
+  if (msg.type === 'enableTool') { enableTool(msg.tool, msg.options); sendResponse({ success: true }); }
+  else if (msg.type === 'disableTool') { disableTool(msg.tool); sendResponse({ success: true }); }
+  else if (msg.type === 'settingsChanged') {
+    updateSettings(msg.settings || {});
+    applyVisualSettings(getSettings());
+    scheduleScan();
     sendResponse({ success: true });
   }
-  // No `return true` here: every matched branch above calls sendResponse
-  // synchronously, and an unconditional `return true` would tell Chrome to
-  // keep the channel open for messages this listener doesn't handle (e.g.
-  // gemini, getActiveSkills) — which causes the "port closed before a
-  // response was received" warning when the unrelated handler in background
-  // sends its response and the channel finally tears down.
+  else if (msg.type === 'revertAll') { revertAll(); sendResponse({ success: true }); }
+  else if (msg.type === 'rescan') { revertAll(); init(); sendResponse({ success: true }); }
+  else if (msg.type === 'setEnabled') {
+    updateSettings({ enabled: msg.enabled });
+    if (!msg.enabled) revertAll(); else init();
+    sendResponse({ success: true });
+  }
+  else if (msg.type === 'getToolStates') { sendResponse({ states: getToolStates() }); }
+  else if (msg.type === 'getStats') { sendResponse({ success: true, stats: { ...stats }, fixes: [...fixes] }); }
+  else if (msg.type === 'speakPage') { ReadAloud.speakPage({ rate: msg.rate || 1 }); sendResponse({ success: true }); }
+  else if (msg.type === 'stopSpeech') { ReadAloud.stop(); sendResponse({ success: true }); }
+  else if (msg.type === 'applyProfile') { if (msg.settings) applyProfileSettings(msg.settings); sendResponse({ success: true }); }
+  // No unconditional `return true`: every handled branch responds synchronously.
 });
 
-function applyProfileSettings(settings) {
-  // voiceCommands intentionally absent: voice mode is the harness Voice
-  // Assistant side panel, not the in-page speech-recognition adapter.
-  const toolMapping = {
-    darkMode: 'DarkMode', readerMode: 'ReaderMode',
-    keyboardNav: 'KeyboardNavigator',
-    motionReducer: 'MotionReducer'
-  };
-
-  for (const [key, toolName] of Object.entries(toolMapping)) {
-    if (settings[key] === true) enableTool(toolName);
-    else if (settings[key] === false) disableTool(toolName);
-  }
-
-  if (settings.focusMode) {
-    enableTool('FocusMode', {
-      hideDistractions: settings.hideDistractions || false,
-      showProgress: settings.showProgress !== false
-    });
-  } else if (settings.focusMode === false) {
-    disableTool('FocusMode');
-  }
-
-  if (settings.colorBlindMode && settings.colorBlindMode !== 'none') {
-    enableTool('ColorBlindMode', settings.colorBlindMode);
-  } else if (settings.colorBlindMode === 'none') {
-    disableTool('ColorBlindMode');
-  }
-
-  const vaKeys = ['contrastMode', 'fontScale', 'lineHeight', 'letterSpacing',
-    'dyslexiaFont', 'largeCursor', 'enhanceFocus', 'readingGuide'];
-  if (vaKeys.some(k => settings[k] !== undefined)) {
-    const va = {
-      contrastMode: settings.contrastMode || 'none',
-      fontScale: (settings.fontScale || 100) / 100,
-      lineHeight: settings.lineHeight || 1.5,
-      letterSpacing: settings.letterSpacing || 0,
-      dyslexiaFont: settings.dyslexiaFont || false,
-      largeCursor: settings.largeCursor || false,
-      enhanceFocus: settings.enhanceFocus || false,
-      readingGuide: settings.readingGuide || false
-    };
-    enableTool('VisualAssist', va);
-  }
-
-  const aiKeys = { autoWcagFix: WcagFixes, autoFixLabels: GenerateLabels,
-    autoDescribe: AutoAltText, autoCaptions: GenerateCaptions,
-    autoSimplify: SimplifyText, autoSummarize: SimplifyText };
-  for (const [key, mod] of Object.entries(aiKeys)) {
-    if (settings[key] === true) { try { mod.enable(); } catch (e) {} }
-  }
-  // Platform-native captions (YouTube) ride along with autoCaptions.
-  if (settings.autoCaptions === true) { try { AutoCaptions.enable(); } catch (e) {} }
-  else if (settings.autoCaptions === false) { try { AutoCaptions.disable(); } catch (e) {} }
-
-  console.log('[AI4A11y] Profile settings applied');
-}
-
+// ── Librarian / site-classification integration (app-specific) ──────────────
 function sendMessageAsync(msg) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(msg, (resp) => {
@@ -365,76 +333,51 @@ function sendMessageAsync(msg) {
   });
 }
 
-// Content contexts present on this page — the scope dimension orthogonal to
-// site category (a news article with an embedded player gets `context:video`
-// preferences even though the SITE isn't a video site). Vocabulary lives in
-// lib/taxonomy.js; detection is deliberately cheap and conservative.
 function detectPageContexts() {
   const contexts = [];
   try {
-    if (document.querySelector('video, audio, iframe[src*="youtube.com"], iframe[src*="vimeo.com"], iframe[src*="player"]')) {
-      contexts.push('video');
-    }
-    const forms = document.querySelectorAll('form input, form select, form textarea');
-    if (forms.length >= 3) contexts.push('form');
-    const text = document.body ? (document.body.innerText || '') : '';
-    if (text.length > 8000) contexts.push('document');
+    if (document.querySelector('video, audio, iframe[src*="youtube.com"], iframe[src*="vimeo.com"], iframe[src*="player"]')) contexts.push('video');
+    if (document.querySelectorAll('form input, form select, form textarea').length >= 3) contexts.push('form');
+    if ((document.body?.innerText || '').length > 8000) contexts.push('document');
   } catch (_) {}
   return contexts;
 }
 
 async function init() {
+  await loadAppSettings();
+  if (getSettings().enabled === false) return;
+
   try {
     const profilesResp = await sendMessageAsync({ type: 'getCustomProfiles' });
     const profiles = profilesResp?.profiles || [];
     const autoApplyProfiles = profiles.filter(p => p.autoApply && p.siteTypes?.length > 0);
     const contexts = detectPageContexts();
 
-    // Always classify the page (the background caches the result) so scoped
-    // Librarian preferences resolve even when the user has no auto-apply
-    // profile — otherwise a "150% on news sites" pref never applies on a site
-    // that nothing else triggered classification for.
     const meta = document.querySelector('meta[name="description"]');
     const classifyResp = await sendMessageAsync({
-      type: 'classifySite',
-      hostname: location.hostname,
-      title: document.title,
-      metaDescription: meta?.content || ''
+      type: 'classifySite', hostname: location.hostname, title: document.title,
+      metaDescription: meta?.content || '',
     });
 
     let appliedProfile = false;
     if (autoApplyProfiles.length > 0 && classifyResp?.matchingProfile?.settings) {
-      console.log(`[AI4A11y] Auto-applying profile "${classifyResp.matchingProfile.name}" for ${classifyResp.siteType} site`);
       applyProfileSettings(classifyResp.matchingProfile.settings);
       appliedProfile = true;
       if (classifyResp.matchingProfile.actions?.length > 0) {
         chrome.runtime.sendMessage({
-          type: 'runProfileActions',
-          actions: classifyResp.matchingProfile.actions,
-          sourceUrl: location.href,
+          type: 'runProfileActions', actions: classifyResp.matchingProfile.actions, sourceUrl: location.href,
         });
       }
     }
     if (!appliedProfile) {
-      await initFromStorage();
+      applyVisualSettings(getSettings());
+      scheduleScan();
     }
 
-    // Librarian layer: learned preferences for this page's scope chain
-    // (general → context → category → origin). Applied on top of the
-    // baseline so the most specific memory wins. The merge already folds
-    // in the matching custom profile, so when a profile applied above this
-    // mostly adds origin-level and context-level refinements.
     const prefs = await sendMessageAsync({
-      type: 'librarianEffectivePreferences',
-      url: location.href,
-      contexts,
+      type: 'librarianEffectivePreferences', url: location.href, contexts,
     });
     if (prefs?.settings && Object.keys(prefs.settings).length > 0) {
-      console.log('[AI4A11y] Applying Librarian preferences:', Object.keys(prefs.settings).join(', '));
-      // Overlay on the stored baseline: applyProfileSettings treats the
-      // visual-assist group as a whole (missing keys reset to defaults), so
-      // a partial prefs object like {dyslexiaFont:false} must not wipe the
-      // user's other stored visual settings.
       const VA_KEYS = ['contrastMode', 'fontScale', 'lineHeight', 'letterSpacing',
         'dyslexiaFont', 'largeCursor', 'enhanceFocus', 'readingGuide'];
       let overlay = prefs.settings;
@@ -445,8 +388,9 @@ async function init() {
       applyProfileSettings(overlay);
     }
   } catch (e) {
-    console.warn('[AI4A11y] Init failed, falling back to global settings:', e);
-    await initFromStorage();
+    console.warn('[AI4A11y] Init failed, applying stored settings only:', e);
+    applyVisualSettings(getSettings());
+    scheduleScan();
   }
 }
 

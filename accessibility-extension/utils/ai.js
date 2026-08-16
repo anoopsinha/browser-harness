@@ -1,171 +1,140 @@
-let _provider = null;
-
-export function setAIProvider(provider) {
-  _provider = provider;
-}
-
-export function getAIProvider() {
-  return _provider;
-}
-
-export async function callAI(prompt) {
-  if (!_provider) throw new Error('No AI provider set');
-  if (typeof _provider === 'function') return _provider(prompt);
-  if (_provider.sendToBackground) return _provider.sendToBackground(prompt);
-  throw new Error('Invalid AI provider');
-}
-
-export async function describeImage(imageData) {
-  if (!_provider) throw new Error('No AI provider set');
-  return _provider.describeImage(imageData);
-}
-
-export async function describeVideo(frames) {
-  if (!_provider) throw new Error('No AI provider set');
-  return _provider.describeVideo(frames);
-}
-
-export async function simplifyText(text, options) {
-  if (!_provider) throw new Error('No AI provider set');
-  return _provider.simplifyText(text, options);
-}
-
-export async function summarizeText(text) {
-  if (!_provider) throw new Error('No AI provider set');
-  return _provider.summarizeText(text);
-}
-
-export async function generateLabels(context) {
-  if (!_provider) throw new Error('No AI provider set');
-  return _provider.generateLabels(context);
-}
-
-export async function generateCaptions(audioData) {
-  if (!_provider) throw new Error('No AI provider set');
-  return _provider.generateCaptions(audioData);
-}
-
-export async function inferLabel(context) {
-  if (!_provider) throw new Error('No AI provider set');
-  return _provider.inferLabel(context);
-}
-
-export async function fixContrast(foreground, background) {
-  if (!_provider?.fixContrast) return null;
-  return _provider.fixContrast(foreground, background);
-}
-
-export async function getYouTubeTranscript(videoId) {
-  if (!_provider?.getYouTubeTranscript) return null;
-  return _provider.getYouTubeTranscript(videoId);
-}
-
-export async function transcribeVideo(videoUrl) {
-  if (!_provider?.transcribeVideo) return null;
-  return _provider.transcribeVideo(videoUrl);
-}
-
-export async function transcribeAudio(audioUrl) {
-  if (!_provider?.transcribeAudio) return null;
-  return _provider.transcribeAudio(audioUrl);
-}
-
-export async function describeElement(element, context) {
-  if (!_provider?.describeElement) return null;
-  return _provider.describeElement(element, context);
-}
-
-export function announce(message) {
-  if (_provider?.announce) {
-    _provider.announce(message);
-  }
-}
+// App-owned AI provider bridge.
+//
+// The accessibility adapters now come from the ai-for-accessibility-toolkit
+// package (single source of truth). Those adapters call the toolkit's own
+// provider abstraction (toolkit/tools/utils/ai.js) via setAIProvider(). This
+// file supplies the ONE piece that stays app-specific: a provider object that
+// bridges every AI capability the 44 toolkit adapters need to THIS extension's
+// background service worker.
+//
+// This extension's background exposes a single generic `gemini` handler
+// ({ prompt, images } -> text), so — unlike the toolkit's basic extension,
+// which has one background handler per task — each method below builds its own
+// prompt client-side and sends it through that one channel. Prompt wording is
+// ported from the toolkit's reference handlers so behavior matches.
 
 export function createChromeAIProvider() {
-  function sendToBackground(prompt, images) {
+  // Generic channel to background.js's `gemini` handler. `images` is an array
+  // of data URLs / base64 frames attached as multimodal inlineData.
+  function ask(prompt, images) {
     return new Promise((resolve, reject) => {
       const msg = { type: 'gemini', prompt };
-      if (images) msg.images = images;
+      if (images && images.length) msg.images = images;
       chrome.runtime.sendMessage(msg, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (response?.error) {
-          reject(new Error(response.error));
-          return;
-        }
-        resolve(response?.result || '');
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (response?.error) return reject(new Error(response.error));
+        resolve((response?.result || '').trim());
       });
     });
   }
 
-  return {
-    sendToBackground,
+  // Pull the first JSON value out of a model reply that may be fenced or prosy.
+  function parseJson(text) {
+    if (!text) return null;
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const body = fenced ? fenced[1] : text;
+    const start = body.search(/[[{]/);
+    if (start === -1) return null;
+    try { return JSON.parse(body.slice(start)); } catch { return null; }
+  }
 
+  return {
+    // ── Images / vision ────────────────────────────────────────────────────
     async describeImage(imageData) {
-      return sendToBackground(
-        'Describe this image concisely for use as alt text on a webpage. Be specific and brief (under 125 characters). Return ONLY the alt text.',
+      return ask(
+        'Describe this image concisely for use as alt text on a webpage. Be specific and brief (under 125 characters). Return ONLY the alt text, no preamble.',
         [imageData]
       );
     },
 
-    async describeVideo(frames) {
-      return sendToBackground(
-        'These are frames from a video. Describe what is happening in the video concisely for accessibility purposes. Return ONLY the description.',
+    async describeVideo(frames /*, metadata */) {
+      return ask(
+        'These are sequential frames from a video. Describe what happens in the video in 1-2 sentences for accessibility. Return ONLY the description.',
         frames
       );
     },
 
+    async describeElement(imageData, elementType, context) {
+      const ctx = context ? ` It is a ${elementType || 'UI element'} in this context: ${context}.` : ` It is a ${elementType || 'UI element'}.`;
+      return ask(
+        `Describe this on-screen element for a screen-reader user in one short, useful sentence.${ctx} Return ONLY the description.`,
+        imageData ? [imageData] : undefined
+      );
+    },
+
+    async extractChartData(imageData, context) {
+      const hint = context ? ` Context: ${context}.` : '';
+      const out = await ask(
+        `This image is a chart, graph, or diagram.${hint} Extract its underlying data as JSON of the shape ` +
+        `{"title": string, "headers": string[], "rows": string[][]}. Use concise cell values. ` +
+        'If it is not a data chart, return {"headers":[],"rows":[]}. Return ONLY the JSON.',
+        [imageData]
+      );
+      return parseJson(out);
+    },
+
+    // ── Text ───────────────────────────────────────────────────────────────
     async simplifyText(text) {
-      return sendToBackground(`Simplify the following text to a 6th-grade reading level. Keep the meaning but use simpler words and shorter sentences. Return ONLY the simplified text.\n\n${text}`);
+      return ask(`Simplify the following text to about a 6th-grade reading level. Keep the meaning; use shorter words and sentences. Return ONLY the simplified text.\n\n${text}`);
     },
 
     async summarizeText(text) {
-      return sendToBackground(`Summarize the following text in 2-3 concise sentences. Return ONLY the summary.\n\n${text}`);
+      return ask(`Summarize the following text in 2-3 concise sentences. Return ONLY the summary.\n\n${text}`);
     },
 
-    async generateLabels(context) {
-      const { elements } = context;
-      return sendToBackground(`Generate accessible labels for the following elements. Return a JSON array of labels.\n\n${JSON.stringify(elements)}`);
+    async translateText(text, targetLang) {
+      return ask(`Translate the following text into ${targetLang || 'English'}. Preserve meaning and tone. Return ONLY the translation, no notes.\n\n${text}`);
     },
 
-    async generateCaptions(audioData) {
-      return sendToBackground(`Generate captions for the following audio data. Return timestamped captions.\n\n${audioData}`);
+    async defineWord(word, context) {
+      const c = context ? ` As used in: "${context}".` : '';
+      return ask(`Give a short, plain-language definition (one sentence, under 20 words) of "${word}".${c} Return ONLY the definition.`);
     },
 
-    async inferLabel(context) {
-      const { elementType, url, existingText, context: ctx, svgContent } = context;
-      let prompt = `Generate a short, accessible label for a ${elementType || 'element'}.`;
-      if (url) prompt += ` URL: ${url}`;
-      if (existingText) prompt += ` Existing text: ${existingText}`;
-      if (ctx) prompt += ` Context: ${ctx}`;
-      if (svgContent) prompt += ` SVG content: ${svgContent}`;
-      prompt += ` Return ONLY the label text, nothing else.`;
-      return sendToBackground(prompt);
+    // ── Labels / links / tables ──────────────────────────────────────────────
+    // generate-labels and fix-links both call these with an object context.
+    async inferLabel(ctx = {}) {
+      const { elementType, html, context } = ctx;
+      let p = `Generate a short, descriptive accessible name (2-6 words) for a ${elementType || 'control'} on a web page.`;
+      if (html) p += `\nElement HTML: ${String(html).slice(0, 500)}`;
+      if (context) p += `\nSurrounding context: ${String(context).slice(0, 300)}`;
+      p += '\nReturn ONLY the label text.';
+      return ask(p);
     },
 
+    // Toolkit's provider treats generateLabels and inferLabel identically.
+    async generateLabels(ctx = {}) {
+      return this.inferLabel(ctx);
+    },
+
+    async improveLinkText(linkText, href, context) {
+      let p = `A link's visible text is "${linkText || '(empty)'}"`;
+      if (href) p += ` and it points to ${href}`;
+      if (context) p += `. Nearby context: ${String(context).slice(0, 300)}`;
+      p += '. Write a clearer, self-describing accessible name for this link (under 8 words) so a screen-reader user knows where it goes. Return ONLY the label text.';
+      return ask(p);
+    },
+
+    async inferColumnHeader(sampleData) {
+      const samples = Array.isArray(sampleData) ? sampleData.slice(0, 8).join(', ') : String(sampleData || '');
+      return ask(`These are sample values from one column of a data table: ${samples}. Give a short column header (1-3 words) that names what they represent. Return ONLY the header.`);
+    },
+
+    // ── Contrast ─────────────────────────────────────────────────────────────
     async fixContrast(foreground, background) {
-      const result = await sendToBackground(`Given foreground color "${foreground}" on background "${background}", suggest a new foreground color that meets WCAG AA contrast ratio (4.5:1). Return ONLY the hex color code, e.g. #1a2b3c.`);
-      return result?.trim() || null;
+      const out = await ask(`Foreground color "${foreground}" on background "${background}" fails WCAG AA contrast. Suggest the closest foreground color that reaches 4.5:1 while staying visually similar. Return ONLY a hex code like #1a2b3c.`);
+      const m = out && out.match(/#[0-9a-fA-F]{6}/);
+      return m ? m[0] : null;
     },
 
-    async getYouTubeTranscript(videoId) {
-      return null;
-    },
+    // ── Media transcription ─────────────────────────────────────────────────
+    // The generic gemini channel can't transcribe audio/fetch YouTube tracks,
+    // so these degrade to null — the captions adapter falls back to native CC.
+    async getYouTubeTranscript() { return null; },
+    async transcribeVideo() { return null; },
+    async transcribeAudio() { return null; },
 
-    async transcribeVideo(videoUrl) {
-      return null;
-    },
-
-    async transcribeAudio(audioUrl) {
-      return null;
-    },
-
-    async describeElement(element, context) {
-      return null;
-    },
-
+    // ── Live-region announcements (no AI) ────────────────────────────────────
     announce(message) {
       let region = document.getElementById('ai4a11y-announcer');
       if (!region) {
@@ -175,9 +144,9 @@ export function createChromeAIProvider() {
         region.setAttribute('aria-live', 'polite');
         region.setAttribute('aria-atomic', 'true');
         region.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
-        document.body.appendChild(region);
+        (document.body || document.documentElement).appendChild(region);
       }
       region.textContent = message;
-    }
+    },
   };
 }
